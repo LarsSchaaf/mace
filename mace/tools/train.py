@@ -145,6 +145,12 @@ def train(
             if swa_start:
                 logging.info("Changing loss based on SWA")
                 swa_start = False
+                # Save a checkpoint before changing to swa
+                checkpoint_handler.save(
+                    state=CheckpointState(model, optimizer, lr_scheduler),
+                    epochs=epoch,
+                    last_before_swa=True,
+                )
             loss_fn = swa.loss_fn
             swa.model.update_parameters(model)
             swa.scheduler.step()

@@ -53,11 +53,17 @@ class CheckpointIO:
         self._epochs_string = "_epoch-"
         self._filename_extension = "pt"
 
-    def _get_checkpoint_filename(self, epochs: int) -> str:
+    def _get_checkpoint_filename(self, epochs: int, last_before_swa=False) -> str:
+        # If saving checkpoint before changing to swa - change file name
+        if last_before_swa:
+            swa_str = "-before-swa"
+        else:
+            swa_str = ""
         return (
             self.tag
             + self._epochs_string
             + str(epochs)
+            + swa_str
             + "."
             + self._filename_extension
         )
@@ -105,12 +111,12 @@ class CheckpointIO:
         )
         return latest_checkpoint_info.path
 
-    def save(self, checkpoint: Checkpoint, epochs: int) -> None:
-        if not self.keep and self.old_path:
+    def save(self, checkpoint: Checkpoint, epochs: int, last_before_swa=False) -> None:
+        if not last_before_swa and not self.keep and self.old_path:
             logging.debug(f"Deleting old checkpoint file: {self.old_path}")
             os.remove(self.old_path)
 
-        filename = self._get_checkpoint_filename(epochs)
+        filename = self._get_checkpoint_filename(epochs, last_before_swa)
         path = os.path.join(self.directory, filename)
         logging.debug(f"Saving checkpoint: {path}")
         os.makedirs(self.directory, exist_ok=True)
@@ -146,9 +152,9 @@ class CheckpointHandler:
         self.io = CheckpointIO(*args, **kwargs)
         self.builder = CheckpointBuilder()
 
-    def save(self, state: CheckpointState, epochs: int) -> None:
+    def save(self, state: CheckpointState, epochs: int, last_before_swa=False) -> None:
         checkpoint = self.builder.create_checkpoint(state)
-        self.io.save(checkpoint, epochs)
+        self.io.save(checkpoint, epochs, last_before_swa)
 
     def load_latest(
         self,
