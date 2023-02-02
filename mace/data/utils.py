@@ -20,8 +20,10 @@ Forces = np.ndarray  # [..., 3]
 Stress = np.ndarray  # [6, ]
 Virials = np.ndarray  # [3,3]
 Charges = np.ndarray  # [..., 1]
+Clusters = np.ndarray  # [..., 1]
 Cell = np.ndarray  # [3,3]
 Pbc = tuple  # (3,)
+
 
 DEFAULT_CONFIG_TYPE = "Default"
 DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
@@ -39,7 +41,7 @@ class Configuration:
     charges: Optional[Charges] = None  # atomic unit
     cell: Optional[Cell] = None
     pbc: Optional[Pbc] = None
-
+    clusters: Optional[Clusters] = None  # cluster index of atom
     weight: float = 1.0  # weight of config in loss
     energy_weight: float = 1.0  # weight of config energy in loss
     forces_weight: float = 1.0  # weight of config forces in loss
@@ -74,6 +76,7 @@ def config_from_atoms_list(
     energy_key="energy",
     forces_key="forces",
     stress_key="stress",
+    cluster_key="clusters",
     virials_key="virials",
     dipole_key="dipole",
     charges_key="charges",
@@ -91,6 +94,7 @@ def config_from_atoms_list(
                 energy_key=energy_key,
                 forces_key=forces_key,
                 stress_key=stress_key,
+                cluster_key=cluster_key,
                 virials_key=virials_key,
                 dipole_key=dipole_key,
                 charges_key=charges_key,
@@ -105,6 +109,7 @@ def config_from_atoms(
     energy_key="energy",
     forces_key="forces",
     stress_key="stress",
+    cluster_key="clusters",
     virials_key="virials",
     dipole_key="dipole",
     charges_key="charges",
@@ -117,6 +122,7 @@ def config_from_atoms(
     energy = atoms.info.get(energy_key, None)  # eV
     forces = atoms.arrays.get(forces_key, None)  # eV / Ang
     stress = atoms.info.get(stress_key, None)  # eV / Ang
+    clusters = atoms.arrays.get(cluster_key, None)
     virials = atoms.info.get(virials_key, None)
     dipole = atoms.info.get(dipole_key, None)  # Debye
     # Charges default to 0 instead of None if not found
@@ -133,6 +139,7 @@ def config_from_atoms(
     energy_weight = atoms.info.get("config_energy_weight", 1.0)
     forces_weight = atoms.info.get("config_forces_weight", 1.0)
     stress_weight = atoms.info.get("config_stress_weight", 1.0)
+    clusters_weight = atoms.info.get("config_clusters_weight", 1.0)
     virials_weight = atoms.info.get("config_virials_weight", 1.0)
 
     # fill in missing quantities but set their weight to 0.0
@@ -145,6 +152,9 @@ def config_from_atoms(
     if stress is None:
         stress = np.zeros(6)
         stress_weight = 0.0
+    if clusters is None:
+        clusters = np.zeros(len(atoms))
+        clusters_weight = 0.0
     if virials is None:
         virials = np.zeros((3, 3))
         virials_weight = 0.0
@@ -155,6 +165,7 @@ def config_from_atoms(
         energy=energy,
         forces=forces,
         stress=stress,
+        clusters=clusters,
         virials=virials,
         dipole=dipole,
         charges=charges,
@@ -162,6 +173,7 @@ def config_from_atoms(
         energy_weight=energy_weight,
         forces_weight=forces_weight,
         stress_weight=stress_weight,
+        clusters_weight=clusters_weight,
         virials_weight=virials_weight,
         config_type=config_type,
         pbc=pbc,
@@ -191,6 +203,7 @@ def load_from_xyz(
     energy_key: str = "energy",
     forces_key: str = "forces",
     stress_key: str = "stress",
+    cluster_key: str = "clusters",
     virials_key: str = "virials",
     dipole_key: str = "dipole",
     charges_key: str = "charges",
@@ -231,6 +244,7 @@ def load_from_xyz(
         energy_key=energy_key,
         forces_key=forces_key,
         stress_key=stress_key,
+        cluster_key=cluster_key,
         virials_key=virials_key,
         dipole_key=dipole_key,
         charges_key=charges_key,
