@@ -26,6 +26,7 @@ from .utils import (
     compute_rel_rmse,
     compute_rmse,
 )
+from mace.tools.scatter import scatter_sum
 
 
 @dataclasses.dataclass
@@ -127,6 +128,13 @@ def train(
                 error_f = eval_metrics["rmse_f"] * 1e3
                 logging.info(
                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A"
+                )
+            elif log_errors == "PerAtomRMSECluster":
+                error_e = eval_metrics["rmse_e_per_atom"] * 1e3
+                error_f = eval_metrics["rmse_f"] * 1e3
+                error_cluster = eval_metrics["rmse_cluster_force"] * 1e3
+                logging.info(
+                    f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_cluster_force={error_cluster:.1f} meV / A^3"
                 )
             elif (
                 log_errors == "PerAtomRMSEstressvirials"
@@ -276,6 +284,8 @@ def evaluate(
     delta_mus_list = []
     delta_mus_per_atom_list = []
     mus_list = []
+    clusters_list = []
+    delta_cluster_force = []
     batch = None  # for pylint
 
     start_time = time.time()
@@ -327,6 +337,20 @@ def evaluate(
                 / (batch.ptr[1:] - batch.ptr[:-1]).unsqueeze(-1)
             )
             mus_list.append(batch.dipole)
+        if batch.get("cluster") is not None:
+            cluster_computed = True
+            cluster_forces_ref = scatter_sum(
+                batch["forces"],
+                torch.unique(batch.clusters, return_inverse=True)[1],
+                dim=0,
+            )
+            cluster_forces_pred = scatter_sum(
+                output["forces"],
+                torch.unique(batch.clusters, return_inverse=True)[1],
+                dim=0,
+            )
+            delta_cluster_force.append(cluster_forces_ref - cluster_forces_pred)
+            clusters_list.append(batch.cluster)
 
     avg_loss = total_loss / len(data_loader)
 
@@ -375,6 +399,12 @@ def evaluate(
         aux["rmse_mu_per_atom"] = compute_rmse(delta_mus_per_atom)
         aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
         aux["q95_mu"] = compute_q95(delta_mus)
+    if cluster_computed:
+        clusters = to_numpy(torch.cat(clusters_list, dim=0))
+        delta_cluster_force = to_numpy(torch.cat(delta_cluster_force, dim=0))
+        aux["mae_cluster_force"] = compute_mae(delta_cluster_force)
+        aux["rmse_cluster_force"] = compute_rmse(delta_cluster_force)
+        aux["q95_cluster_force"] = compute_q95(delta_cluster_force)
 
     aux["time"] = time.time() - start_time
 

@@ -43,7 +43,7 @@ class AtomicData(torch_geometric.data.Data):
     forces_weight: torch.Tensor
     stress_weight: torch.Tensor
     virials_weight: torch.Tensor
-    clusters_weight: torch.Tensor
+    cluster_weight: torch.Tensor
 
     def __init__(
         self,
@@ -57,7 +57,7 @@ class AtomicData(torch_geometric.data.Data):
         energy_weight: Optional[torch.Tensor],  # [,]
         forces_weight: Optional[torch.Tensor],  # [,]
         stress_weight: Optional[torch.Tensor],  # [,]
-        clusters_weight: Optional[torch.Tensor],  # [,]
+        cluster_weight: Optional[torch.Tensor],  # [,]
         virials_weight: Optional[torch.Tensor],  # [,]
         forces: Optional[torch.Tensor],  # [n_nodes, 3]
         energy: Optional[torch.Tensor],  # [, ]
@@ -80,7 +80,7 @@ class AtomicData(torch_geometric.data.Data):
         assert forces_weight is None or len(forces_weight.shape) == 0
         assert stress_weight is None or len(stress_weight.shape) == 0
         assert virials_weight is None or len(virials_weight.shape) == 0
-        assert clusters_weight is None or len(clusters_weight.shape) == 0
+        assert cluster_weight is None or len(cluster_weight.shape) == 0
         assert cell is None or cell.shape == (3, 3)
         assert forces is None or forces.shape == (num_nodes, 3)
         assert energy is None or len(energy.shape) == 0
@@ -102,7 +102,7 @@ class AtomicData(torch_geometric.data.Data):
             "energy_weight": energy_weight,
             "forces_weight": forces_weight,
             "stress_weight": stress_weight,
-            "clusters_weight": clusters_weight,
+            "cluster_weight": cluster_weight,
             "virials_weight": virials_weight,
             "forces": forces,
             "energy": energy,
@@ -159,9 +159,9 @@ class AtomicData(torch_geometric.data.Data):
             else 1
         )
 
-        clusters_weight = (
-            torch.tensor(config.clusters_weight, dtype=torch.get_default_dtype())
-            if config.clusters_weight is not None
+        cluster_weight = (
+            torch.tensor(config.cluster_weight, dtype=torch.get_default_dtype())
+            if config.cluster_weight is not None
             else 1
         )
 
@@ -220,7 +220,7 @@ class AtomicData(torch_geometric.data.Data):
             energy_weight=energy_weight,
             forces_weight=forces_weight,
             stress_weight=stress_weight,
-            clusters_weight=clusters_weight,
+            cluster_weight=cluster_weight,
             virials_weight=virials_weight,
             forces=forces,
             energy=energy,
