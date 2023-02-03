@@ -65,6 +65,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "DipoleRMSE",
             "DipoleMAE",
             "EnergyDipoleRMSE",
+            "PerAtomRMSECluster",
         ],
         default="PerAtomRMSE",
     )
@@ -283,7 +284,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--virials_weight", help="weight of virials loss", type=float, default=1.0
     )
     parser.add_argument(
-        "--cluster_weight", help="weight of cluster loss", type=float, default=1.0
+        "--cluster_weight", help="weight of cluster loss", type=float, default=0.0
     )
     parser.add_argument(
         "--swa_virials_weight",
@@ -295,7 +296,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--swa_cluster_weight",
         help="weight of cluster loss after starting swa",
         type=float,
-        default=1.0,
+        default=0.0,
     )
     parser.add_argument(
         "--stress_weight", help="weight of virials loss", type=float, default=1.0
