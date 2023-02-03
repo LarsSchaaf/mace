@@ -47,6 +47,7 @@ class Configuration:
     forces_weight: float = 1.0  # weight of config forces in loss
     stress_weight: float = 1.0  # weight of config stress in loss
     virials_weight: float = 1.0  # weight of config virial in loss
+    clusters_weight: float = 1.0  # weight of config clusters in loss
     config_type: Optional[str] = DEFAULT_CONFIG_TYPE  # config_type of config
 
 
@@ -76,7 +77,7 @@ def config_from_atoms_list(
     energy_key="energy",
     forces_key="forces",
     stress_key="stress",
-    cluster_key="clusters",
+    cluster_key="cluster_id",
     virials_key="virials",
     dipole_key="dipole",
     charges_key="charges",
@@ -109,7 +110,7 @@ def config_from_atoms(
     energy_key="energy",
     forces_key="forces",
     stress_key="stress",
-    cluster_key="clusters",
+    cluster_key="cluster_id",
     virials_key="virials",
     dipole_key="dipole",
     charges_key="charges",
@@ -203,7 +204,7 @@ def load_from_xyz(
     energy_key: str = "energy",
     forces_key: str = "forces",
     stress_key: str = "stress",
-    cluster_key: str = "clusters",
+    cluster_key: str = "cluster_id",
     virials_key: str = "virials",
     dipole_key: str = "dipole",
     charges_key: str = "charges",

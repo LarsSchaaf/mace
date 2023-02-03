@@ -235,7 +235,6 @@ class MACE(torch.nn.Module):
             compute_virials=compute_virials,
             compute_stress=compute_stress,
         )
-
         return {
             "energy": total_energy,
             "node_energy": node_energy,

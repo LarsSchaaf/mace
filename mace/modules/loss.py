@@ -8,6 +8,7 @@ import torch
 
 from mace.tools import TensorDict
 from mace.tools.torch_geometric import Batch
+from mace.tools.scatter import scatter_sum
 
 
 def mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
@@ -16,6 +17,14 @@ def mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
 
 
 def weighted_mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
+    print("Breakpoint", flush=True)
+    breakpoint()
+    print(
+        scatter_sum(
+            ref.forces, torch.unique(ref.clusters, return_inverse=True)[1], dim=0
+        )
+    )
+
     # energy: [n_graphs, ]
     configs_weight = ref.weight  # [n_graphs, ]
     configs_energy_weight = ref.energy_weight  # [n_graphs, ]

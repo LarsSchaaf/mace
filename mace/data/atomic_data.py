@@ -189,7 +189,7 @@ class AtomicData(torch_geometric.data.Data):
             else None
         )
         clusters = (
-            torch.tensor(config.clusters, dtype=torch.get_default_dtype())
+            torch.tensor(config.clusters, dtype=torch.int64)
             if config.clusters is not None
             else None
         )
