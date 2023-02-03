@@ -140,6 +140,15 @@ def create_error_table(
             "relative F RMSE %",
             "RMSE Stress (Virials) / meV / A (A^3)",
         ]
+    elif table_type == "PerAtomRMSEstressCluster":
+        table.field_names = [
+            "config_type",
+            "RMSE E / meV / atom",
+            "RMSE F / meV / A",
+            "relative F RMSE %",
+            "RMSE Stress / meV / A",
+            "RMSE Cluster / meV/A",
+        ]
     elif table_type == "TotalMAE":
         table.field_names = [
             "config_type",
@@ -219,6 +228,17 @@ def create_error_table(
                     f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
                     f"{metrics['rmse_f'] * 1000:.1f}",
                     f"{metrics['rel_rmse_f']:.2f}",
+                    f"{metrics['rmse_cluster'] * 1000:.1f}",
+                ]
+            )
+        elif table_type == "PerAtomRMSEstressCluster":
+            table.add_row(
+                [
+                    name,
+                    f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
+                    f"{metrics['rmse_f'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_f']:.2f}",
+                    f"{metrics['rmse_stress'] * 1000:.1f}",
                     f"{metrics['rmse_cluster'] * 1000:.1f}",
                 ]
             )
