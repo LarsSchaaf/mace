@@ -337,7 +337,7 @@ def evaluate(
                 / (batch.ptr[1:] - batch.ptr[:-1]).unsqueeze(-1)
             )
             mus_list.append(batch.dipole)
-        if batch.get("cluster") is not None:
+        if batch.clusters is not None: # TODO: fix this
             cluster_computed = True
             cluster_forces_ref = scatter_sum(
                 batch["forces"],

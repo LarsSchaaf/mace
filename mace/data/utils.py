@@ -20,7 +20,7 @@ Forces = np.ndarray  # [..., 3]
 Stress = np.ndarray  # [6, ]
 Virials = np.ndarray  # [3,3]
 Charges = np.ndarray  # [..., 1]
-Clusters = np.ndarray  # [..., 1]
+Cluster = np.ndarray  # [..., 1]
 Cell = np.ndarray  # [3,3]
 Pbc = tuple  # (3,)
 
@@ -41,13 +41,13 @@ class Configuration:
     charges: Optional[Charges] = None  # atomic unit
     cell: Optional[Cell] = None
     pbc: Optional[Pbc] = None
-    clusters: Optional[Clusters] = None  # cluster index of atom
+    cluster: Optional[Cluster] = None  # cluster index of atom
     weight: float = 1.0  # weight of config in loss
     energy_weight: float = 1.0  # weight of config energy in loss
     forces_weight: float = 1.0  # weight of config forces in loss
     stress_weight: float = 1.0  # weight of config stress in loss
     virials_weight: float = 1.0  # weight of config virial in loss
-    cluster_weight: float = 1.0  # weight of config clusters in loss
+    cluster_weight: float = 1.0  # weight of config cluster in loss
     config_type: Optional[str] = DEFAULT_CONFIG_TYPE  # config_type of config
 
 
@@ -123,7 +123,7 @@ def config_from_atoms(
     energy = atoms.info.get(energy_key, None)  # eV
     forces = atoms.arrays.get(forces_key, None)  # eV / Ang
     stress = atoms.info.get(stress_key, None)  # eV / Ang
-    clusters = atoms.arrays.get(cluster_key, None)
+    cluster = atoms.arrays.get(cluster_key, None)
     virials = atoms.info.get(virials_key, None)
     dipole = atoms.info.get(dipole_key, None)  # Debye
     # Charges default to 0 instead of None if not found
@@ -153,8 +153,8 @@ def config_from_atoms(
     if stress is None:
         stress = np.zeros(6)
         stress_weight = 0.0
-    if clusters is None:
-        clusters = np.zeros(len(atoms))
+    if cluster is None:
+        cluster = np.zeros(len(atoms))
         cluster_weight = 0.0
     if virials is None:
         virials = np.zeros((3, 3))
@@ -166,7 +166,7 @@ def config_from_atoms(
         energy=energy,
         forces=forces,
         stress=stress,
-        clusters=clusters,
+        cluster=cluster,
         virials=virials,
         dipole=dipole,
         charges=charges,

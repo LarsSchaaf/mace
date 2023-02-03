@@ -17,7 +17,6 @@ def mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
 
 
 def weighted_mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
-    print("Breakpoint", flush=True)
     # energy: [n_graphs, ]
     configs_weight = ref.weight  # [n_graphs, ]
     configs_energy_weight = ref.energy_weight  # [n_graphs, ]
@@ -33,10 +32,10 @@ def weighted_mean_square_error_force_cluster(
     ref: Batch, pred: TensorDict
 ) -> torch.Tensor:
     cluster_forces_ref = scatter_sum(
-        ref["forces"], torch.unique(ref.clusters, return_inverse=True)[1], dim=0
+        ref["forces"], torch.unique(ref.cluster, return_inverse=True)[1], dim=0
     )
     cluster_forces_pred = scatter_sum(
-        pred["forces"], torch.unique(ref.clusters, return_inverse=True)[1], dim=0
+        pred["forces"], torch.unique(ref.cluster, return_inverse=True)[1], dim=0
     )
     return torch.mean(torch.square(cluster_forces_ref - cluster_forces_pred))
 

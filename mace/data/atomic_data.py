@@ -34,7 +34,7 @@ class AtomicData(torch_geometric.data.Data):
     forces: torch.Tensor
     energy: torch.Tensor
     stress: torch.Tensor
-    clusters: torch.Tensor
+    cluster: torch.Tensor
     virials: torch.Tensor
     dipole: torch.Tensor
     charges: torch.Tensor
@@ -62,7 +62,7 @@ class AtomicData(torch_geometric.data.Data):
         forces: Optional[torch.Tensor],  # [n_nodes, 3]
         energy: Optional[torch.Tensor],  # [, ]
         stress: Optional[torch.Tensor],  # [1,3,3]
-        clusters: Optional[torch.Tensor],  # [n_nodes, ]
+        cluster: Optional[torch.Tensor],  # [n_nodes, ]
         virials: Optional[torch.Tensor],  # [1,3,3]
         dipole: Optional[torch.Tensor],  # [, 3]
         charges: Optional[torch.Tensor],  # [n_nodes, ]
@@ -85,7 +85,7 @@ class AtomicData(torch_geometric.data.Data):
         assert forces is None or forces.shape == (num_nodes, 3)
         assert energy is None or len(energy.shape) == 0
         assert stress is None or stress.shape == (1, 3, 3)
-        assert clusters is None or clusters.shape == (num_nodes,)
+        assert cluster is None or cluster.shape == (num_nodes,)
         assert virials is None or virials.shape == (1, 3, 3)
         assert dipole is None or dipole.shape[-1] == 3
         assert charges is None or charges.shape == (num_nodes,)
@@ -107,7 +107,7 @@ class AtomicData(torch_geometric.data.Data):
             "forces": forces,
             "energy": energy,
             "stress": stress,
-            "clusters": clusters,
+            "cluster": cluster,
             "virials": virials,
             "dipole": dipole,
             "charges": charges,
@@ -188,9 +188,9 @@ class AtomicData(torch_geometric.data.Data):
             if config.stress is not None
             else None
         )
-        clusters = (
-            torch.tensor(config.clusters, dtype=torch.int64)
-            if config.clusters is not None
+        cluster = (
+            torch.tensor(config.cluster, dtype=torch.int64)
+            if config.cluster is not None
             else None
         )
         virials = (
@@ -225,7 +225,7 @@ class AtomicData(torch_geometric.data.Data):
             forces=forces,
             energy=energy,
             stress=stress,
-            clusters=clusters,
+            cluster=cluster,
             virials=virials,
             dipole=dipole,
             charges=charges,
