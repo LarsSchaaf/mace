@@ -66,7 +66,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "DipoleMAE",
             "EnergyDipoleRMSE",
             "PerAtomRMSECluster",
-            'PerAtomRMSEstressCluster',
+            "PerAtomRMSEstressCluster",
         ],
         default="PerAtomRMSE",
     )
@@ -256,6 +256,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "ef",
             "weighted",
             "weighted_cluster",
+            "weighted_cluster_stress",
             "forces_only",
             "virials",
             "stress",
