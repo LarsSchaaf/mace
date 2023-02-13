@@ -198,11 +198,15 @@ def train(
                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_Mu_per_atom={error_mu:.2f} mDebye"
                 )
             if log_wandb:
+                eval_metrics_valid_prefix = {
+                    f"valid_{k}": v for k, v in eval_metrics.items()
+                }
                 wandb_log_dict = {
                     "epoch": epoch,
                     "valid_loss": valid_loss,
                     "valid_rmse_e_per_atom": eval_metrics["rmse_e_per_atom"],
                     "valid_rmse_f": eval_metrics["rmse_f"],
+                    **eval_metrics_valid_prefix,
                 }
                 wandb.log(wandb_log_dict)
             if valid_loss >= lowest_loss:
@@ -419,7 +423,6 @@ def evaluate(
         aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
         aux["q95_mu"] = compute_q95(delta_mus)
     if cluster_computed:
-        cluster = to_numpy(torch.cat(cluster_list, dim=0))
         delta_cluster_force = to_numpy(torch.cat(delta_cluster_force, dim=0))
         aux["mae_cluster_force"] = compute_mae(delta_cluster_force)
         aux["rmse_cluster_force"] = compute_rmse(delta_cluster_force)

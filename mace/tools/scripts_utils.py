@@ -240,7 +240,7 @@ def create_error_table(
                     f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
                     f"{metrics['rmse_f'] * 1000:.1f}",
                     f"{metrics['rel_rmse_f']:.2f}",
-                    f"{metrics['rmse_cluster'] * 1000:.1f}",
+                    f"{metrics['rmse_cluster_force'] * 1000:.1f}",
                 ]
             )
         elif table_type == "PerAtomRMSEstressCluster":
@@ -251,7 +251,7 @@ def create_error_table(
                     f"{metrics['rmse_f'] * 1000:.1f}",
                     f"{metrics['rel_rmse_f']:.2f}",
                     f"{metrics['rmse_stress'] * 1000:.1f}",
-                    f"{metrics['rmse_cluster'] * 1000:.1f}",
+                    f"{metrics['rmse_cluster_force'] * 1000:.1f}",
                 ]
             )
         elif (
