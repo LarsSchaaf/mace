@@ -5,6 +5,7 @@
 ###########################################################################################
 
 import torch
+import logging
 
 from mace.tools import TensorDict
 from mace.tools.torch_geometric import Batch
@@ -157,11 +158,17 @@ class WeightedEnergyForcesLossForceCluster(torch.nn.Module):
         )
 
     def forward(self, ref: Batch, pred: TensorDict) -> torch.Tensor:
-        return (
+        tloss = (
             self.energy_weight * weighted_mean_squared_error_energy(ref, pred)
             + self.forces_weight * mean_squared_error_forces(ref, pred)
             + self.cluster_weight * weighted_mean_square_error_force_cluster(ref, pred)
         )
+        # logging.info(
+        #     f"Cluster weight: {self.cluster_weight}, "
+        #     f"Cluster error: {weighted_mean_square_error_force_cluster(ref, pred)},"
+        #     f" Total loss: {tloss}"
+        # )
+        return tloss
 
     def __repr__(self):
         return (

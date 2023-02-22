@@ -346,8 +346,8 @@ class AgnosticNonlinearInteractionBlock(InteractionBlock):
             self.node_feats_irreps, self.edge_attrs_irreps, self.target_irreps
         )
         self.conv_tp = o3.TensorProduct(
-            self.node_feats_irreps,
-            self.edge_attrs_irreps,
+            self.node_feats_irreps,  # h,
+            self.edge_attrs_irreps,  # Y(r)
             irreps_mid,
             instructions=instructions,
             shared_weights=False,
@@ -359,7 +359,7 @@ class AgnosticNonlinearInteractionBlock(InteractionBlock):
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + 3 * [64] + [self.conv_tp.weight_numel],
             torch.nn.functional.silu,
-        )
+        )  # Radial basis (RW)
 
         # Linear
         irreps_mid = irreps_mid.simplify()
@@ -385,7 +385,7 @@ class AgnosticNonlinearInteractionBlock(InteractionBlock):
         sender = edge_index[0]
         receiver = edge_index[1]
         num_nodes = node_feats.shape[0]
-        tp_weights = self.conv_tp_weights(edge_feats)
+        tp_weights = self.conv_tp_weights(edge_feats)  # R(r)
         node_feats = self.linear_up(node_feats)
         mji = self.conv_tp(
             node_feats[sender], edge_attrs, tp_weights

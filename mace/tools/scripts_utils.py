@@ -134,6 +134,7 @@ def create_error_table(
             "RMSE F / meV / A",
             "relative F RMSE %",
             "RMSE Cluster / meV/A",
+            "relative Cluster RMSE %",
         ]
     elif table_type == "PerAtomRMSEstressvirials":
         table.field_names = [
@@ -151,6 +152,7 @@ def create_error_table(
             "relative F RMSE %",
             "RMSE Stress / meV / A",
             "RMSE Cluster / meV/A",
+            "relative Cluster RMSE %",
         ]
     elif table_type == "TotalMAE":
         table.field_names = [
@@ -206,15 +208,14 @@ def create_error_table(
             output_args=output_args,
             device=device,
         )
-        if log_wandb:
-            wandb_log_dict = {
-                name
-                + "_final_rmse_e_per_atom": metrics["rmse_e_per_atom"]
-                * 1e3,  # meV / atom
-                name + "_final_rmse_f": metrics["rmse_f"] * 1e3,  # meV / A
-                name + "_final_rel_rmse_f": metrics["rel_rmse_f"],
-            }
-            wandb.log(wandb_log_dict)
+
+        wandb_log_dict = {
+            name
+            + "_final_rmse_e_per_atom": metrics["rmse_e_per_atom"] * 1e3,  # meV / atom
+            name + "_final_rmse_f": metrics["rmse_f"] * 1e3,  # meV / A
+            name + "_final_rel_rmse_f": metrics["rel_rmse_f"],
+        }
+
         if table_type == "TotalRMSE":
             table.add_row(
                 [
@@ -241,7 +242,18 @@ def create_error_table(
                     f"{metrics['rmse_f'] * 1000:.1f}",
                     f"{metrics['rel_rmse_f']:.2f}",
                     f"{metrics['rmse_cluster_force'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_cluster_force']:.2f}",
                 ]
+            )
+            # save all aditional results to wandb
+            wandb_log_dict.update(
+                {
+                    name + "_final_rmse_cluster_force": metrics["rmse_cluster_force"],
+                    name
+                    + "_final_rel_rmse_cluster_force": metrics[
+                        "rel_rmse_cluster_force"
+                    ],
+                }
             )
         elif table_type == "PerAtomRMSEstressCluster":
             table.add_row(
@@ -252,7 +264,19 @@ def create_error_table(
                     f"{metrics['rel_rmse_f']:.2f}",
                     f"{metrics['rmse_stress'] * 1000:.1f}",
                     f"{metrics['rmse_cluster_force'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_cluster_force']:.2f}",
                 ]
+            )
+            # save all aditional results to wandb
+            wandb_log_dict.update(
+                {
+                    name + "_final_rmse_stress": metrics["rmse_stress"],
+                    name + "_final_rmse_cluster_force": metrics["rmse_cluster_force"],
+                    name
+                    + "_final_rel_rmse_cluster_force": metrics[
+                        "rel_rmse_cluster_force"
+                    ],
+                }
             )
         elif (
             table_type == "PerAtomRMSEstressvirials"
@@ -325,4 +349,6 @@ def create_error_table(
                     f"{metrics['rel_rmse_mu']:.1f}",
                 ]
             )
+        if log_wandb:
+            wandb.log(wandb_log_dict)
     return table

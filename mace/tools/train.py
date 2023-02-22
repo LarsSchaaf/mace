@@ -308,6 +308,7 @@ def evaluate(
     mus_list = []
     cluster_list = []
     delta_cluster_force = []
+    cluster_force_list = []
     batch = None  # for pylint
 
     start_time = time.time()
@@ -373,6 +374,7 @@ def evaluate(
             )
 
             delta_cluster_force.append(cluster_forces_ref - cluster_forces_pred)
+            cluster_force_list.append(cluster_forces_ref)
             cluster_list.append(batch.cluster)
 
     avg_loss = total_loss / len(data_loader)
@@ -424,9 +426,13 @@ def evaluate(
         aux["q95_mu"] = compute_q95(delta_mus)
     if cluster_computed:
         delta_cluster_force = to_numpy(torch.cat(delta_cluster_force, dim=0))
+        cluster_forces_all = to_numpy(torch.cat(cluster_force_list, dim=0))
         aux["mae_cluster_force"] = compute_mae(delta_cluster_force)
         aux["rmse_cluster_force"] = compute_rmse(delta_cluster_force)
         aux["q95_cluster_force"] = compute_q95(delta_cluster_force)
+        aux["rel_rmse_cluster_force"] = compute_rel_rmse(
+            delta_cluster_force, cluster_forces_all
+        )
 
     aux["time"] = time.time() - start_time
 

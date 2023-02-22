@@ -145,17 +145,18 @@ def main() -> None:
     )
 
     loss_fn: torch.nn.Module
+
     if args.loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
             energy_weight=args.energy_weight, forces_weight=args.forces_weight
         )
-    if args.loss == "weighted_cluster":
+    elif args.loss == "weighted_cluster":
         loss_fn = modules.WeightedEnergyForcesLossForceCluster(
             energy_weight=args.energy_weight,
             forces_weight=args.forces_weight,
             cluster_weight=args.cluster_weight,
         )
-    if args.loss == "weighted_cluster_stress":
+    elif args.loss == "weighted_cluster_stress":
         loss_fn = modules.WeightedEnergyForcesStressLossForceCluster(
             energy_weight=args.energy_weight,
             forces_weight=args.forces_weight,
@@ -429,9 +430,9 @@ def main() -> None:
             )
         elif args.loss == "weighted_cluster":
             loss_fn_energy = modules.WeightedEnergyForcesLossForceCluster(
-                energy_weight=args.energy_weight,
-                forces_weight=args.forces_weight,
-                cluster_weight=args.cluster_weight,
+                energy_weight=args.swa_energy_weight,
+                forces_weight=args.swa_forces_weight,
+                cluster_weight=args.swa_cluster_weight,
             )
             logging.info(
                 f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight} and learning rate : {args.swa_lr}"
@@ -501,6 +502,7 @@ def main() -> None:
     if args.wandb:
         logging.info("Using Weights and Biases for logging")
         import wandb
+
         wandb_config = {}
         args_dict = vars(args)
         args_dict_json = json.dumps(args_dict)
