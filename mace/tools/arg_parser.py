@@ -252,6 +252,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="stress",
     )
     parser.add_argument(
+        "--cluster_key",
+        help="Key of atom clusters in training xyz. ""Needed for training on eg. cluster forces. " "Indices are not allowed to repeat accross configurations.",
+        type=str,
+        default="cluster_id",
+    )
+    parser.add_argument(
         "--dipole_key",
         help="Key of reference dipoles in training xyz",
         type=str,

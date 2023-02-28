@@ -57,6 +57,7 @@ def main() -> None:
         energy_key=args.energy_key,
         forces_key=args.forces_key,
         stress_key=args.stress_key,
+        cluster_key=args.cluster_key,
         virials_key=args.virials_key,
         dipole_key=args.dipole_key,
         charges_key=args.charges_key,
