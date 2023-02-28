@@ -183,7 +183,7 @@ def train(
                 )
             if log_wandb:
                 eval_metrics_valid_prefix = {
-                    f"valid_{k}": v for k, v in eval_metrics.items()
+                    f"all-data/valid_{k}": v for k, v in eval_metrics.items()
                 }
                 wandb_log_dict = {
                     "epoch": epoch,
