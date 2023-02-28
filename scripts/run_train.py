@@ -164,9 +164,23 @@ def main() -> None:
     )
 
     loss_fn: torch.nn.Module
+
     if args.loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
             energy_weight=args.energy_weight, forces_weight=args.forces_weight
+        )
+    elif args.loss == "weighted_cluster":
+        loss_fn = modules.WeightedEnergyForcesLossForceCluster(
+            energy_weight=args.energy_weight,
+            forces_weight=args.forces_weight,
+            cluster_weight=args.cluster_weight,
+        )
+    elif args.loss == "weighted_cluster_stress":
+        loss_fn = modules.WeightedEnergyForcesStressLossForceCluster(
+            energy_weight=args.energy_weight,
+            forces_weight=args.forces_weight,
+            stress_weight=args.stress_weight,
+            cluster_weight=args.cluster_weight,
         )
     elif args.loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(forces_weight=args.forces_weight)
@@ -431,6 +445,25 @@ def main() -> None:
             )
             logging.info(
                 f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
+            )
+        elif args.loss == "weighted_cluster":
+            loss_fn_energy = modules.WeightedEnergyForcesLossForceCluster(
+                energy_weight=args.swa_energy_weight,
+                forces_weight=args.swa_forces_weight,
+                cluster_weight=args.swa_cluster_weight,
+            )
+            logging.info(
+                f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight} and learning rate : {args.swa_lr}"
+            )
+        elif args.loss == "weighted_cluster_stress":
+            loss_fn_energy = modules.WeightedEnergyForcesStressLossForceCluster(
+                energy_weight=args.energy_weight,
+                forces_weight=args.forces_weight,
+                stress_weight=args.stress_weight,
+                cluster_weight=args.cluster_weight,
+            )
+            logging.info(
+                f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
             )
         else:
             loss_fn_energy = modules.WeightedEnergyForcesLoss(
