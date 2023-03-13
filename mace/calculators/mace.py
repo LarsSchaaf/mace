@@ -34,8 +34,8 @@ class MACECalculator(Calculator):
         self.results = {}
 
         self.model = torch.load(f=model_path, map_location=device)
-        self.r_max = float(self.model.r_max)
         self.device = torch_tools.init_device(device)
+        self.r_max = torch.tensor(self.model.r_max, dtype=torch.float64, device=self.device)
         self.energy_units_to_eV = energy_units_to_eV
         self.length_units_to_A = length_units_to_A
         self.z_table = utils.AtomicNumberTable(
@@ -61,7 +61,7 @@ class MACECalculator(Calculator):
         data_loader = torch_geometric.dataloader.DataLoader(
             dataset=[
                 data.AtomicData.from_config(
-                    config, z_table=self.z_table, cutoff=self.r_max
+                    config, z_table=self.z_table, cutoffs=self.r_max
                 )
             ],
             batch_size=1,
