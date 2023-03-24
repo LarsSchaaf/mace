@@ -5,10 +5,10 @@
 ###########################################################################################
 
 import ast
+import json
 import logging
 from pathlib import Path
 from typing import Optional
-import json
 
 import numpy as np
 import torch.nn.functional
@@ -285,6 +285,8 @@ def main() -> None:
             MLP_irreps=o3.Irreps(args.MLP_irreps),
             atomic_inter_scale=std,
             atomic_inter_shift=0.0,
+            radial_MLP=ast.literal_eval(args.radial_MLP),
+
         )
     elif args.model == "ScaleShiftMACE":
         mean, std = modules.scaling_classes[args.scaling](train_loader, atomic_energies)
@@ -296,6 +298,7 @@ def main() -> None:
             MLP_irreps=o3.Irreps(args.MLP_irreps),
             atomic_inter_scale=std,
             atomic_inter_shift=mean,
+            radial_MLP=ast.literal_eval(args.radial_MLP),
         )
     elif args.model == "ScaleShiftBOTNet":
         mean, std = modules.scaling_classes[args.scaling](train_loader, atomic_energies)
@@ -501,7 +504,7 @@ def main() -> None:
                 swa=True,
                 device=device,
             )
-        except:
+        except Exception as e:
             opt_start_epoch = checkpoint_handler.load_latest(
                 state=tools.CheckpointState(model, optimizer, lr_scheduler),
                 swa=False,
@@ -574,6 +577,8 @@ def main() -> None:
         model.to(device)
         logging.info(f"Loaded model from epoch {epoch}")
 
+        for param in model.parameters():
+            param.requires_grad = False
         table = create_error_table(
             table_type=args.error_table,
             all_collections=all_collections,
