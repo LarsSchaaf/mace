@@ -129,9 +129,28 @@ def main() -> None:
         )
         logging.info(f"Atomic energies: {atomic_energies.tolist()}")
 
+    # Support different settings for each layer
+    r_max = ast.literal_eval(args.r_max)
+    correlation = ast.literal_eval(args.correlation)
+
+    if isinstance(r_max, (list, tuple, np.ndarray)):
+        r_max = torch.tensor(r_max, dtype=torch.get_default_dtype())
+    else:
+        r_max = torch.tensor(
+            [r_max] * args.num_interactions, dtype=torch.get_default_dtype()
+        )
+    if isinstance(correlation, (list, tuple, np.ndarray)):
+        correlation = torch.tensor(correlation, dtype=torch.int)
+    else:
+        correlation = torch.tensor(
+            [correlation] * args.num_interactions, dtype=torch.int
+        )
+    assert r_max.shape == correlation.shape, f"Rmax and Correlation must have same shape: {r_max.shape} != {correlation.shape}"
+    assert r_max.shape[0] == args.num_interactions, f"Rmax and Correlation must have length num_interactions: {r_max.shape[0]} != {args.num_interactions}"
+
     train_loader = torch_geometric.dataloader.DataLoader(
         dataset=[
-            data.AtomicData.from_config(config, z_table=z_table, cutoff=args.r_max)
+            data.AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
             for config in collections.train
         ],
         batch_size=args.batch_size,
@@ -140,7 +159,7 @@ def main() -> None:
     )
     valid_loader = torch_geometric.dataloader.DataLoader(
         dataset=[
-            data.AtomicData.from_config(config, z_table=z_table, cutoff=args.r_max)
+            data.AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
             for config in collections.valid
         ],
         batch_size=args.valid_batch_size,
@@ -230,7 +249,7 @@ def main() -> None:
 
     logging.info(f"Hidden irreps: {args.hidden_irreps}")
     model_config = dict(
-        r_max=args.r_max,
+        r_max=r_max,
         num_bessel=args.num_radial_basis,
         num_polynomial_cutoff=args.num_cutoff_basis,
         max_ell=args.max_ell,
@@ -255,7 +274,7 @@ def main() -> None:
             )
         model = modules.ScaleShiftMACE(
             **model_config,
-            correlation=args.correlation,
+            correlations=correlation,
             gate=modules.gate_dict[args.gate],
             interaction_cls_first=modules.interaction_classes[
                 "RealAgnosticInteractionBlock"
@@ -269,7 +288,7 @@ def main() -> None:
         mean, std = modules.scaling_classes[args.scaling](train_loader, atomic_energies)
         model = modules.ScaleShiftMACE(
             **model_config,
-            correlation=args.correlation,
+            correlations=correlation,
             gate=modules.gate_dict[args.gate],
             interaction_cls_first=modules.interaction_classes[args.interaction_first],
             MLP_irreps=o3.Irreps(args.MLP_irreps),
@@ -530,7 +549,7 @@ def main() -> None:
             table_type=args.error_table,
             all_collections=all_collections,
             z_table=z_table,
-            r_max=args.r_max,
+            r_max=r_max,
             valid_batch_size=args.valid_batch_size,
             model=model,
             loss_fn=loss_fn,
