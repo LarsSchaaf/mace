@@ -40,7 +40,7 @@ torch.set_default_dtype(torch.float64)
 class TestLoss:
     def test_weighted_loss(self):
         loss = WeightedEnergyForcesLoss(energy_weight=1, forces_weight=10)
-        data = AtomicData.from_config(config, z_table=table, cutoff=3.0)
+        data = AtomicData.from_config(config, z_table=table, cutoffs=3.0)
         data_loader = torch_geometric.dataloader.DataLoader(
             dataset=[data, data],
             batch_size=2,
@@ -90,7 +90,7 @@ class TestBlocks:
     def test_atomic_energies(self):
         energies_block = AtomicEnergiesBlock(atomic_energies=np.array([1.0, 3.0]))
 
-        data = AtomicData.from_config(config, z_table=table, cutoff=3.0)
+        data = AtomicData.from_config(config, z_table=table, cutoffs=3.0)
         data_loader = torch_geometric.dataloader.DataLoader(
             dataset=[data, data],
             batch_size=2,

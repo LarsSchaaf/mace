@@ -79,7 +79,7 @@ def main():
     data_loader = torch_geometric.dataloader.DataLoader(
         dataset=[
             data.AtomicData.from_config(
-                config, z_table=z_table, cutoff=float(model.r_max)
+                config, z_table=z_table, cutoffs=float(model.r_max)
             )
             for config in configs
         ],

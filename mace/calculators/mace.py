@@ -164,7 +164,7 @@ class MACECalculator(Calculator):
         data_loader = torch_geometric.dataloader.DataLoader(
             dataset=[
                 data.AtomicData.from_config(
-                    config, z_table=self.z_table, cutoff=self.r_max
+                    config, z_table=self.z_table, cutoffs=self.r_max
                 )
             ],
             batch_size=1,

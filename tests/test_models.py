@@ -76,9 +76,9 @@ def test_mace():
     model = modules.MACE(**model_config)
     model_compiled = jit.compile(model)
 
-    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=3.0)
+    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoffs=3.0)
     atomic_data2 = data.AtomicData.from_config(
-        config_rotated, z_table=table, cutoff=3.0
+        config_rotated, z_table=table, cutoffs=3.0
     )
 
     data_loader = torch_geometric.dataloader.DataLoader(
@@ -119,9 +119,9 @@ def test_dipole_mace():
     )
     model = modules.AtomicDipolesMACE(**model_config)
 
-    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=3.0)
+    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoffs=3.0)
     atomic_data2 = data.AtomicData.from_config(
-        config_rotated, z_table=table, cutoff=3.0
+        config_rotated, z_table=table, cutoffs=3.0
     )
 
     data_loader = torch_geometric.dataloader.DataLoader(
@@ -169,9 +169,9 @@ def test_energy_dipole_mace():
     )
     model = modules.EnergyDipolesMACE(**model_config)
 
-    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoff=3.0)
+    atomic_data = data.AtomicData.from_config(config, z_table=table, cutoffs=3.0)
     atomic_data2 = data.AtomicData.from_config(
-        config_rotated, z_table=table, cutoff=3.0
+        config_rotated, z_table=table, cutoffs=3.0
     )
 
     data_loader = torch_geometric.dataloader.DataLoader(
