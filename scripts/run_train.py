@@ -61,6 +61,7 @@ def main() -> None:
         energy_key=args.energy_key,
         forces_key=args.forces_key,
         stress_key=args.stress_key,
+        cluster_key=args.cluster_key,
         virials_key=args.virials_key,
         dipole_key=args.dipole_key,
         charges_key=args.charges_key,
@@ -129,9 +130,28 @@ def main() -> None:
         )
         logging.info(f"Atomic energies: {atomic_energies.tolist()}")
 
+    # Support different settings for each layer
+    r_max = ast.literal_eval(args.r_max)
+    correlation = ast.literal_eval(args.correlation)
+
+    if isinstance(r_max, (list, tuple, np.ndarray)):
+        r_max = torch.tensor(r_max, dtype=torch.get_default_dtype())
+    else:
+        r_max = torch.tensor(
+            [r_max] * args.num_interactions, dtype=torch.get_default_dtype()
+        )
+    if isinstance(correlation, (list, tuple, np.ndarray)):
+        correlation = torch.tensor(correlation, dtype=torch.int)
+    else:
+        correlation = torch.tensor(
+            [correlation] * args.num_interactions, dtype=torch.int
+        )
+    assert r_max.shape == correlation.shape, f"Rmax and Correlation must have same shape: {r_max.shape} != {correlation.shape}"
+    assert r_max.shape[0] == args.num_interactions, f"Rmax and Correlation must have length num_interactions: {r_max.shape[0]} != {args.num_interactions}"
+
     train_loader = torch_geometric.dataloader.DataLoader(
         dataset=[
-            data.AtomicData.from_config(config, z_table=z_table, cutoff=args.r_max)
+            data.AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
             for config in collections.train
         ],
         batch_size=args.batch_size,
@@ -140,7 +160,7 @@ def main() -> None:
     )
     valid_loader = torch_geometric.dataloader.DataLoader(
         dataset=[
-            data.AtomicData.from_config(config, z_table=z_table, cutoff=args.r_max)
+            data.AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
             for config in collections.valid
         ],
         batch_size=args.valid_batch_size,
@@ -149,9 +169,23 @@ def main() -> None:
     )
 
     loss_fn: torch.nn.Module
+
     if args.loss == "weighted":
         loss_fn = modules.WeightedEnergyForcesLoss(
             energy_weight=args.energy_weight, forces_weight=args.forces_weight
+        )
+    elif args.loss == "weighted_cluster":
+        loss_fn = modules.WeightedEnergyForcesLossForceCluster(
+            energy_weight=args.energy_weight,
+            forces_weight=args.forces_weight,
+            cluster_weight=args.cluster_weight,
+        )
+    elif args.loss == "weighted_cluster_stress":
+        loss_fn = modules.WeightedEnergyForcesStressLossForceCluster(
+            energy_weight=args.energy_weight,
+            forces_weight=args.forces_weight,
+            stress_weight=args.stress_weight,
+            cluster_weight=args.cluster_weight,
         )
     elif args.loss == "forces_only":
         loss_fn = modules.WeightedForcesLoss(forces_weight=args.forces_weight)
@@ -192,7 +226,6 @@ def main() -> None:
         # Unweighted Energy and Forces loss by default
         loss_fn = modules.WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=1.0)
     logging.info(loss_fn)
-
     if args.compute_avg_num_neighbors:
         args.avg_num_neighbors = modules.compute_avg_num_neighbors(train_loader)
     logging.info(f"Average number of neighbors: {args.avg_num_neighbors}")
@@ -230,7 +263,7 @@ def main() -> None:
 
     logging.info(f"Hidden irreps: {args.hidden_irreps}")
     model_config = dict(
-        r_max=args.r_max,
+        r_max=r_max,
         num_bessel=args.num_radial_basis,
         num_polynomial_cutoff=args.num_cutoff_basis,
         max_ell=args.max_ell,
@@ -255,7 +288,7 @@ def main() -> None:
             )
         model = modules.ScaleShiftMACE(
             **model_config,
-            correlation=args.correlation,
+            correlations=correlation,
             gate=modules.gate_dict[args.gate],
             interaction_cls_first=modules.interaction_classes[
                 "RealAgnosticInteractionBlock"
@@ -269,7 +302,7 @@ def main() -> None:
         mean, std = modules.scaling_classes[args.scaling](train_loader, atomic_energies)
         model = modules.ScaleShiftMACE(
             **model_config,
-            correlation=args.correlation,
+            correlations=correlation,
             gate=modules.gate_dict[args.gate],
             interaction_cls_first=modules.interaction_classes[args.interaction_first],
             MLP_irreps=o3.Irreps(args.MLP_irreps),
@@ -416,6 +449,25 @@ def main() -> None:
             logging.info(
                 f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
             )
+        elif args.loss == "weighted_cluster":
+            loss_fn_energy = modules.WeightedEnergyForcesLossForceCluster(
+                energy_weight=args.swa_energy_weight,
+                forces_weight=args.swa_forces_weight,
+                cluster_weight=args.swa_cluster_weight,
+            )
+            logging.info(
+                f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight} and learning rate : {args.swa_lr}"
+            )
+        elif args.loss == "weighted_cluster_stress":
+            loss_fn_energy = modules.WeightedEnergyForcesStressLossForceCluster(
+                energy_weight=args.energy_weight,
+                forces_weight=args.forces_weight,
+                stress_weight=args.stress_weight,
+                cluster_weight=args.cluster_weight,
+            )
+            logging.info(
+                f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
+            )
         else:
             loss_fn_energy = modules.WeightedEnergyForcesLoss(
                 energy_weight=args.swa_energy_weight,
@@ -530,7 +582,7 @@ def main() -> None:
             table_type=args.error_table,
             all_collections=all_collections,
             z_table=z_table,
-            r_max=args.r_max,
+            r_max=r_max,
             valid_batch_size=args.valid_batch_size,
             model=model,
             loss_fn=loss_fn,

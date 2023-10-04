@@ -34,6 +34,7 @@ def get_dataset_from_xyz(
     forces_key: str = "forces",
     stress_key: str = "stress",
     virials_key: str = "virials",
+    cluster_key: str = "cluster_id",
     dipole_key: str = "dipoles",
     charges_key: str = "charges",
 ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
@@ -60,6 +61,7 @@ def get_dataset_from_xyz(
             forces_key=forces_key,
             stress_key=stress_key,
             virials_key=virials_key,
+            cluster_key=cluster_key,
             dipole_key=dipole_key,
             charges_key=charges_key,
             extract_atomic_energies=False,
@@ -83,6 +85,9 @@ def get_dataset_from_xyz(
             config_type_weights=config_type_weights,
             energy_key=energy_key,
             forces_key=forces_key,
+            stress_key=stress_key,
+            virials_key=virials_key,
+            cluster_key=cluster_key,
             dipole_key=dipole_key,
             charges_key=charges_key,
             extract_atomic_energies=False,
@@ -155,6 +160,15 @@ def create_error_table(
             "RMSE F / meV / A",
             "relative F RMSE %",
         ]
+    elif table_type == "PerAtomRMSECluster":
+        table.field_names = [
+            "config_type",
+            "RMSE E / meV / atom",
+            "RMSE F / meV / A",
+            "relative F RMSE %",
+            "RMSE Cluster / meV/A",
+            "relative Cluster RMSE %",
+        ]
     elif table_type == "PerAtomRMSEstressvirials":
         table.field_names = [
             "config_type",
@@ -162,6 +176,16 @@ def create_error_table(
             "RMSE F / meV / A",
             "relative F RMSE %",
             "RMSE Stress (Virials) / meV / A (A^3)",
+        ]
+    elif table_type == "PerAtomRMSEstressCluster":
+        table.field_names = [
+            "config_type",
+            "RMSE E / meV / atom",
+            "RMSE F / meV / A",
+            "relative F RMSE %",
+            "RMSE Stress / meV / A",
+            "RMSE Cluster / meV/A",
+            "relative Cluster RMSE %",
         ]
     elif table_type == "TotalMAE":
         table.field_names = [
@@ -201,7 +225,7 @@ def create_error_table(
     for name, subset in all_collections:
         data_loader = torch_geometric.dataloader.DataLoader(
             dataset=[
-                AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
+                AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
                 for config in subset
             ],
             batch_size=valid_batch_size,
@@ -219,11 +243,23 @@ def create_error_table(
         )
         if log_wandb:
             wandb_log_dict = {
-                name
+                "final-models/"
+                + name
                 + "_final_rmse_e_per_atom": metrics["rmse_e_per_atom"]
                 * 1e3,  # meV / atom
-                name + "_final_rmse_f": metrics["rmse_f"] * 1e3,  # meV / A
-                name + "_final_rel_rmse_f": metrics["rel_rmse_f"],
+                "final-models/"
+                + name
+                + "_final_rmse_f": metrics["rmse_f"] * 1e3,  # meV / A
+                "final-models/" + name + "_final_rel_rmse_f": metrics["rel_rmse_f"],
+                # Also add all mae metrics
+                "final-models/"
+                + name
+                + "_final_mae_e_per_atom": metrics["mae_e_per_atom"]
+                * 1e3,  # meV / atom
+                "final-models/"
+                + name
+                + "_final_mae_f": metrics["mae_f"] * 1e3,  # meV / A
+                "final-models/" + name + "_final_rel_mae_f": metrics["rel_mae_f"],
             }
             wandb.log(wandb_log_dict)
         if table_type == "TotalRMSE":
@@ -243,6 +279,50 @@ def create_error_table(
                     f"{metrics['rmse_f'] * 1000:.1f}",
                     f"{metrics['rel_rmse_f']:.2f}",
                 ]
+            )
+        elif table_type == "PerAtomRMSECluster":
+            table.add_row(
+                [
+                    name,
+                    f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
+                    f"{metrics['rmse_f'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_f']:.2f}",
+                    f"{metrics['rmse_cluster_force'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_cluster_force']:.2f}",
+                ]
+            )
+            # save all aditional results to wandb
+            wandb_log_dict.update(
+                {
+                    name + "_final_rmse_cluster_force": metrics["rmse_cluster_force"],
+                    name
+                    + "_final_rel_rmse_cluster_force": metrics[
+                        "rel_rmse_cluster_force"
+                    ],
+                }
+            )
+        elif table_type == "PerAtomRMSEstressCluster":
+            table.add_row(
+                [
+                    name,
+                    f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
+                    f"{metrics['rmse_f'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_f']:.2f}",
+                    f"{metrics['rmse_stress'] * 1000:.1f}",
+                    f"{metrics['rmse_cluster_force'] * 1000:.1f}",
+                    f"{metrics['rel_rmse_cluster_force']:.2f}",
+                ]
+            )
+            # save all aditional results to wandb
+            wandb_log_dict.update(
+                {
+                    name + "_final_rmse_stress": metrics["rmse_stress"],
+                    name + "_final_rmse_cluster_force": metrics["rmse_cluster_force"],
+                    name
+                    + "_final_rel_rmse_cluster_force": metrics[
+                        "rel_rmse_cluster_force"
+                    ],
+                }
             )
         elif (
             table_type == "PerAtomRMSEstressvirials"
@@ -315,4 +395,6 @@ def create_error_table(
                     f"{metrics['rel_rmse_mu']:.1f}",
                 ]
             )
+        if log_wandb:
+            wandb.log(wandb_log_dict)
     return table

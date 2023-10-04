@@ -7,6 +7,7 @@
 from typing import Optional, Sequence
 
 import torch.utils.data
+import numpy as np
 
 from mace.tools import (
     AtomicNumberTable,
@@ -34,6 +35,7 @@ class AtomicData(torch_geometric.data.Data):
     forces: torch.Tensor
     energy: torch.Tensor
     stress: torch.Tensor
+    cluster: torch.Tensor
     virials: torch.Tensor
     dipole: torch.Tensor
     charges: torch.Tensor
@@ -42,10 +44,12 @@ class AtomicData(torch_geometric.data.Data):
     forces_weight: torch.Tensor
     stress_weight: torch.Tensor
     virials_weight: torch.Tensor
+    cluster_weight: torch.Tensor
 
     def __init__(
         self,
         edge_index: torch.Tensor,  # [2, n_edges]
+        edge_index_mask: torch.Tensor,  # [n_layers, n_edges]
         node_attrs: torch.Tensor,  # [n_nodes, n_node_feats]
         positions: torch.Tensor,  # [n_nodes, 3]
         shifts: torch.Tensor,  # [n_edges, 3],
@@ -55,10 +59,12 @@ class AtomicData(torch_geometric.data.Data):
         energy_weight: Optional[torch.Tensor],  # [,]
         forces_weight: Optional[torch.Tensor],  # [,]
         stress_weight: Optional[torch.Tensor],  # [,]
+        cluster_weight: Optional[torch.Tensor],  # [,]
         virials_weight: Optional[torch.Tensor],  # [,]
         forces: Optional[torch.Tensor],  # [n_nodes, 3]
         energy: Optional[torch.Tensor],  # [, ]
         stress: Optional[torch.Tensor],  # [1,3,3]
+        cluster: Optional[torch.Tensor],  # [n_nodes, ]
         virials: Optional[torch.Tensor],  # [1,3,3]
         dipole: Optional[torch.Tensor],  # [, 3]
         charges: Optional[torch.Tensor],  # [n_nodes, ]
@@ -67,6 +73,7 @@ class AtomicData(torch_geometric.data.Data):
         num_nodes = node_attrs.shape[0]
 
         assert edge_index.shape[0] == 2 and len(edge_index.shape) == 2
+        assert edge_index_mask.shape[1] == edge_index.shape[1]
         assert positions.shape == (num_nodes, 3)
         assert shifts.shape[1] == 3
         assert unit_shifts.shape[1] == 3
@@ -76,10 +83,12 @@ class AtomicData(torch_geometric.data.Data):
         assert forces_weight is None or len(forces_weight.shape) == 0
         assert stress_weight is None or len(stress_weight.shape) == 0
         assert virials_weight is None or len(virials_weight.shape) == 0
+        assert cluster_weight is None or len(cluster_weight.shape) == 0
         assert cell is None or cell.shape == (3, 3)
         assert forces is None or forces.shape == (num_nodes, 3)
         assert energy is None or len(energy.shape) == 0
         assert stress is None or stress.shape == (1, 3, 3)
+        assert cluster is None or cluster.shape == (num_nodes,)
         assert virials is None or virials.shape == (1, 3, 3)
         assert dipole is None or dipole.shape[-1] == 3
         assert charges is None or charges.shape == (num_nodes,)
@@ -87,6 +96,7 @@ class AtomicData(torch_geometric.data.Data):
         data = {
             "num_nodes": num_nodes,
             "edge_index": edge_index,
+            'edge_index_mask': edge_index_mask,
             "positions": positions,
             "shifts": shifts,
             "unit_shifts": unit_shifts,
@@ -96,10 +106,12 @@ class AtomicData(torch_geometric.data.Data):
             "energy_weight": energy_weight,
             "forces_weight": forces_weight,
             "stress_weight": stress_weight,
+            "cluster_weight": cluster_weight,
             "virials_weight": virials_weight,
             "forces": forces,
             "energy": energy,
             "stress": stress,
+            "cluster": cluster,
             "virials": virials,
             "dipole": dipole,
             "charges": charges,
@@ -108,11 +120,21 @@ class AtomicData(torch_geometric.data.Data):
 
     @classmethod
     def from_config(
-        cls, config: Configuration, z_table: AtomicNumberTable, cutoff: float
+        cls, config: Configuration, z_table: AtomicNumberTable, cutoffs: list
     ) -> "AtomicData":
         edge_index, shifts, unit_shifts = get_neighborhood(
-            positions=config.positions, cutoff=cutoff, pbc=config.pbc, cell=config.cell
+            positions=config.positions,
+            cutoff=torch.max(cutoffs).item(),
+            pbc=config.pbc,
+            cell=config.cell,
         )
+
+        # edge distances
+        edge_distance = np.linalg.norm(
+            config.positions[edge_index[0]] - config.positions[edge_index[1]] - shifts,
+            axis=1,
+        )
+        edge_index_mask = torch.tensor(edge_distance, device=cutoffs.device) < cutoffs[:, None]
         indices = atomic_numbers_to_indices(config.atomic_numbers, z_table=z_table)
         one_hot = to_one_hot(
             torch.tensor(indices, dtype=torch.long).unsqueeze(-1),
@@ -151,6 +173,12 @@ class AtomicData(torch_geometric.data.Data):
             else 1
         )
 
+        cluster_weight = (
+            torch.tensor(config.cluster_weight, dtype=torch.get_default_dtype())
+            if config.cluster_weight is not None
+            else 1
+        )
+
         virials_weight = (
             torch.tensor(config.virials_weight, dtype=torch.get_default_dtype())
             if config.virials_weight is not None
@@ -174,6 +202,11 @@ class AtomicData(torch_geometric.data.Data):
             if config.stress is not None
             else None
         )
+        cluster = (
+            torch.tensor(config.cluster, dtype=torch.int64)
+            if config.cluster is not None
+            else None
+        )
         virials = (
             torch.tensor(config.virials, dtype=torch.get_default_dtype()).unsqueeze(0)
             if config.virials is not None
@@ -192,6 +225,7 @@ class AtomicData(torch_geometric.data.Data):
 
         return cls(
             edge_index=torch.tensor(edge_index, dtype=torch.long),
+            edge_index_mask=torch.tensor(edge_index_mask, dtype=torch.bool),
             positions=torch.tensor(config.positions, dtype=torch.get_default_dtype()),
             shifts=torch.tensor(shifts, dtype=torch.get_default_dtype()),
             unit_shifts=torch.tensor(unit_shifts, dtype=torch.get_default_dtype()),
@@ -201,10 +235,12 @@ class AtomicData(torch_geometric.data.Data):
             energy_weight=energy_weight,
             forces_weight=forces_weight,
             stress_weight=stress_weight,
+            cluster_weight=cluster_weight,
             virials_weight=virials_weight,
             forces=forces,
             energy=energy,
             stress=stress,
+            cluster=cluster,
             virials=virials,
             dipole=dipole,
             charges=charges,

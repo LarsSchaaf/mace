@@ -1,0 +1,1310 @@
+diff --git a/logs/debugging_run-0.log b/logs/debugging_run-0.log
+new file mode 100644
+index 0000000..82e30e8
+--- /dev/null
++++ b/logs/debugging_run-0.log
+@@ -0,0 +1,4 @@
++2023-02-21 17:34:46.136 INFO: MACE version: 0.2.0
++2023-02-21 17:34:46.138 INFO: Configuration: Namespace(name='debugging', seed=0, log_dir='logs', model_dir='.', checkpoints_dir='checkpoints', results_dir='results', downloads_dir='downloads', device='cpu', default_dtype='float64', log_level='INFO', error_table='PerAtomRMSEstressvirials', model='MACE', r_max=5.0, num_radial_basis=8, num_cutoff_basis=5, interaction='RealAgnosticResidualInteractionBlock', interaction_first='RealAgnosticResidualInteractionBlock', max_ell=3, correlation=3, num_interactions=2, MLP_irreps='16x0e', hidden_irreps='128x0e + 128x1o', num_channels=None, max_L=None, gate='silu', scaling='rms_forces_scaling', avg_num_neighbors=1, compute_avg_num_neighbors=True, compute_stress=True, compute_forces=True, train_file='f3-it0-dataset-no-mols.xyz', valid_file=None, valid_fraction=0.1, test_file='DFT_4-test-first-sample.xyz', E0s='average', energy_key='ctp_energy', forces_key='ctp_forces', virials_key='virials', stress_key='ctp_stress2', dipole_key='dipole', charges_key='charges', loss='stress', forces_weight=10.0, swa_forces_weight=10.0, energy_weight=1.0, swa_energy_weight=100.0, virials_weight=1.0, cluster_weight=0.0, swa_virials_weight=10.0, swa_cluster_weight=0.0, stress_weight=1.0, swa_stress_weight=10.0, dipole_weight=1.0, swa_dipole_weight=1.0, config_type_weights='{Default:1.0}', optimizer='adam', batch_size=2, valid_batch_size=10, lr=0.01, swa_lr=0.0001, weight_decay=5e-07, amsgrad=True, scheduler='ReduceLROnPlateau', lr_factor=0.8, scheduler_patience=50, lr_scheduler_gamma=0.9993, swa=True, start_swa=2, ema=True, ema_decay=0.99, max_num_epochs=4, patience=50, eval_interval=2, keep_checkpoints=False, restart_latest=True, save_cpu=False, clip_grad=10.0, wandb=True, wandb_project='clustering', wandb_entity='larsleons', wandb_name='debugging', wandb_log_hypers=['num_channels', 'max_L', 'correlation', 'lr', 'swa_lr', 'weight_decay', 'batch_size', 'max_num_epochs', 'start_swa', 'energy_weight', 'forces_weight'])
++2023-02-21 17:34:46.139 INFO: Using CPU
++2023-02-21 17:34:46.140 WARNING: Config type weights not specified correctly (malformed node or string: <ast.Name object at 0x2ba1c25a2b50>), using Default
+diff --git a/mace/calculators/mace.py b/mace/calculators/mace.py
+index 02d23c9..1dcb9ce 100644
+--- a/mace/calculators/mace.py
++++ b/mace/calculators/mace.py
+@@ -5,7 +5,7 @@
+ ###########################################################################################
+ 
+ 
+-from glob import glob
++import glob
+ from pathlib import Path
+ from typing import Union
+ 
+@@ -76,7 +76,7 @@ class MACECalculator(Calculator):
+ 
+         if isinstance(model_paths, str):
+             # Find all models that staisfy the wildcard (e.g. mace_model_*.pt)
+-            model_paths_glob = glob(model_paths)
++            model_paths_glob = glob.glob(glob.escape(model_paths))
+             if len(model_paths_glob) == 0:
+                 raise ValueError(f"Couldn't find MACE model files: {model_paths}")
+             model_paths = model_paths_glob
+@@ -99,14 +99,15 @@ class MACECalculator(Calculator):
+         ]
+         for model in self.models:
+             model.to(device)  # shouldn't be necessary but seems to help with GPU
+-        r_maxs = [model.r_max.cpu() for model in self.models]
++        r_maxs = [model.r_max.cpu().numpy() for model in self.models]
+         r_maxs = np.array(r_maxs)
+         assert np.all(
+             r_maxs == r_maxs[0]
+         ), "committee r_max are not all the same {' '.join(r_maxs)}"
+-        self.r_max = r_maxs[0]
++
+ 
+         self.device = torch_tools.init_device(device)
++        self.r_max = torch.tensor(r_maxs[0], device=self.device)
+         self.energy_units_to_eV = energy_units_to_eV
+         self.length_units_to_A = length_units_to_A
+         self.z_table = utils.AtomicNumberTable(
+@@ -119,7 +120,7 @@ class MACECalculator(Calculator):
+                 param.requires_grad = False
+ 
+     def _create_result_tensors(
+-        self, model_type: str, num_models: int, num_atoms: int
++        self, model_type: str, num_models: int, num_atoms: int, num_interactions: int,
+     ) -> dict:
+         """
+         Create tensors to store the results of the committee
+@@ -132,12 +133,14 @@ class MACECalculator(Calculator):
+         if model_type in ["MACE", "EnergyDipoleMACE"]:
+             energies = torch.zeros(num_models, device=self.device)
+             node_energy = torch.zeros(num_models, num_atoms, device=self.device)
++            node__layer_energy = torch.zeros(num_models, num_atoms, num_interactions,device=self.device)
+             forces = torch.zeros(num_models, num_atoms, 3, device=self.device)
+             stress = torch.zeros(num_models, 3, 3, device=self.device)
+             dict_of_tensors.update(
+                 {
+                     "energies": energies,
+                     "node_energy": node_energy,
++                    "node_layer_energy": node__layer_energy,
+                     "forces": forces,
+                     "stress": stress,
+                 }
+@@ -164,7 +167,7 @@ class MACECalculator(Calculator):
+         data_loader = torch_geometric.dataloader.DataLoader(
+             dataset=[
+                 data.AtomicData.from_config(
+-                    config, z_table=self.z_table, cutoff=self.r_max
++                    config, z_table=self.z_table, cutoffs=self.r_max
+                 )
+             ],
+             batch_size=1,
+@@ -181,7 +184,7 @@ class MACECalculator(Calculator):
+ 
+         batch_base = next(iter(data_loader)).to(self.device)
+         ret_tensors = self._create_result_tensors(
+-            self.model_type, self.num_models, len(atoms)
++            self.model_type, self.num_models, len(atoms), num_interactions=int(self.models[0].num_interactions.detach().cpu())
+         )
+         for i, model in enumerate(self.models):
+             batch = batch_base.clone()
+@@ -189,6 +192,8 @@ class MACECalculator(Calculator):
+             if self.model_type in ["MACE", "EnergyDipoleMACE"]:
+                 ret_tensors["energies"][i] = out["energy"].detach()
+                 ret_tensors["node_energy"][i] = (out["node_energy"] - node_e0).detach()
++            # need to add to add to returned node_layer_energy
++                ret_tensors['node_layer_energy'][i] = (out['node_layer_energy'].detach() - node_e0).T
+                 ret_tensors["forces"][i] = out["forces"].detach()
+                 if out["stress"] is not None:
+                     ret_tensors["stress"][i] = out["stress"].detach()
+@@ -205,6 +210,9 @@ class MACECalculator(Calculator):
+             self.results["node_energy"] = (
+                 torch.mean(ret_tensors["node_energy"] - node_e0, dim=0).cpu().numpy()
+             )
++            self.results['node_layer_energy'] = (
++                torch.mean(ret_tensors['node_layer_energy'], dim=0).cpu().numpy()
++            )
+             self.results["forces"] = (
+                 torch.mean(ret_tensors["forces"], dim=0).cpu().numpy()
+                 * self.energy_units_to_eV
+diff --git a/mace/data/atomic_data.py b/mace/data/atomic_data.py
+index 31170d3..47f33a5 100644
+--- a/mace/data/atomic_data.py
++++ b/mace/data/atomic_data.py
+@@ -7,6 +7,7 @@
+ from typing import Optional, Sequence
+ 
+ import torch.utils.data
++import numpy as np
+ 
+ from mace.tools import (
+     AtomicNumberTable,
+@@ -34,6 +35,7 @@ class AtomicData(torch_geometric.data.Data):
+     forces: torch.Tensor
+     energy: torch.Tensor
+     stress: torch.Tensor
++    cluster: torch.Tensor
+     virials: torch.Tensor
+     dipole: torch.Tensor
+     charges: torch.Tensor
+@@ -42,10 +44,12 @@ class AtomicData(torch_geometric.data.Data):
+     forces_weight: torch.Tensor
+     stress_weight: torch.Tensor
+     virials_weight: torch.Tensor
++    cluster_weight: torch.Tensor
+ 
+     def __init__(
+         self,
+         edge_index: torch.Tensor,  # [2, n_edges]
++        edge_index_mask: torch.Tensor,  # [n_layers, n_edges]
+         node_attrs: torch.Tensor,  # [n_nodes, n_node_feats]
+         positions: torch.Tensor,  # [n_nodes, 3]
+         shifts: torch.Tensor,  # [n_edges, 3],
+@@ -55,10 +59,12 @@ class AtomicData(torch_geometric.data.Data):
+         energy_weight: Optional[torch.Tensor],  # [,]
+         forces_weight: Optional[torch.Tensor],  # [,]
+         stress_weight: Optional[torch.Tensor],  # [,]
++        cluster_weight: Optional[torch.Tensor],  # [,]
+         virials_weight: Optional[torch.Tensor],  # [,]
+         forces: Optional[torch.Tensor],  # [n_nodes, 3]
+         energy: Optional[torch.Tensor],  # [, ]
+         stress: Optional[torch.Tensor],  # [1,3,3]
++        cluster: Optional[torch.Tensor],  # [n_nodes, ]
+         virials: Optional[torch.Tensor],  # [1,3,3]
+         dipole: Optional[torch.Tensor],  # [, 3]
+         charges: Optional[torch.Tensor],  # [n_nodes, ]
+@@ -67,6 +73,7 @@ class AtomicData(torch_geometric.data.Data):
+         num_nodes = node_attrs.shape[0]
+ 
+         assert edge_index.shape[0] == 2 and len(edge_index.shape) == 2
++        assert edge_index_mask.shape[1] == edge_index.shape[1]
+         assert positions.shape == (num_nodes, 3)
+         assert shifts.shape[1] == 3
+         assert unit_shifts.shape[1] == 3
+@@ -76,10 +83,12 @@ class AtomicData(torch_geometric.data.Data):
+         assert forces_weight is None or len(forces_weight.shape) == 0
+         assert stress_weight is None or len(stress_weight.shape) == 0
+         assert virials_weight is None or len(virials_weight.shape) == 0
++        assert cluster_weight is None or len(cluster_weight.shape) == 0
+         assert cell is None or cell.shape == (3, 3)
+         assert forces is None or forces.shape == (num_nodes, 3)
+         assert energy is None or len(energy.shape) == 0
+         assert stress is None or stress.shape == (1, 3, 3)
++        assert cluster is None or cluster.shape == (num_nodes,)
+         assert virials is None or virials.shape == (1, 3, 3)
+         assert dipole is None or dipole.shape[-1] == 3
+         assert charges is None or charges.shape == (num_nodes,)
+@@ -87,6 +96,7 @@ class AtomicData(torch_geometric.data.Data):
+         data = {
+             "num_nodes": num_nodes,
+             "edge_index": edge_index,
++            'edge_index_mask': edge_index_mask,
+             "positions": positions,
+             "shifts": shifts,
+             "unit_shifts": unit_shifts,
+@@ -96,10 +106,12 @@ class AtomicData(torch_geometric.data.Data):
+             "energy_weight": energy_weight,
+             "forces_weight": forces_weight,
+             "stress_weight": stress_weight,
++            "cluster_weight": cluster_weight,
+             "virials_weight": virials_weight,
+             "forces": forces,
+             "energy": energy,
+             "stress": stress,
++            "cluster": cluster,
+             "virials": virials,
+             "dipole": dipole,
+             "charges": charges,
+@@ -108,11 +120,21 @@ class AtomicData(torch_geometric.data.Data):
+ 
+     @classmethod
+     def from_config(
+-        cls, config: Configuration, z_table: AtomicNumberTable, cutoff: float
++        cls, config: Configuration, z_table: AtomicNumberTable, cutoffs: list
+     ) -> "AtomicData":
+         edge_index, shifts, unit_shifts = get_neighborhood(
+-            positions=config.positions, cutoff=cutoff, pbc=config.pbc, cell=config.cell
++            positions=config.positions,
++            cutoff=torch.max(cutoffs).item(),
++            pbc=config.pbc,
++            cell=config.cell,
+         )
++
++        # edge distances
++        edge_distance = np.linalg.norm(
++            config.positions[edge_index[0]] - config.positions[edge_index[1]] - shifts,
++            axis=1,
++        )
++        edge_index_mask = torch.tensor(edge_distance, device=cutoffs.device) < cutoffs[:, None]
+         indices = atomic_numbers_to_indices(config.atomic_numbers, z_table=z_table)
+         one_hot = to_one_hot(
+             torch.tensor(indices, dtype=torch.long).unsqueeze(-1),
+@@ -151,6 +173,12 @@ class AtomicData(torch_geometric.data.Data):
+             else 1
+         )
+ 
++        cluster_weight = (
++            torch.tensor(config.cluster_weight, dtype=torch.get_default_dtype())
++            if config.cluster_weight is not None
++            else 1
++        )
++
+         virials_weight = (
+             torch.tensor(config.virials_weight, dtype=torch.get_default_dtype())
+             if config.virials_weight is not None
+@@ -174,6 +202,11 @@ class AtomicData(torch_geometric.data.Data):
+             if config.stress is not None
+             else None
+         )
++        cluster = (
++            torch.tensor(config.cluster, dtype=torch.int64)
++            if config.cluster is not None
++            else None
++        )
+         virials = (
+             torch.tensor(config.virials, dtype=torch.get_default_dtype()).unsqueeze(0)
+             if config.virials is not None
+@@ -192,6 +225,7 @@ class AtomicData(torch_geometric.data.Data):
+ 
+         return cls(
+             edge_index=torch.tensor(edge_index, dtype=torch.long),
++            edge_index_mask=torch.tensor(edge_index_mask, dtype=torch.bool),
+             positions=torch.tensor(config.positions, dtype=torch.get_default_dtype()),
+             shifts=torch.tensor(shifts, dtype=torch.get_default_dtype()),
+             unit_shifts=torch.tensor(unit_shifts, dtype=torch.get_default_dtype()),
+@@ -201,10 +235,12 @@ class AtomicData(torch_geometric.data.Data):
+             energy_weight=energy_weight,
+             forces_weight=forces_weight,
+             stress_weight=stress_weight,
++            cluster_weight=cluster_weight,
+             virials_weight=virials_weight,
+             forces=forces,
+             energy=energy,
+             stress=stress,
++            cluster=cluster,
+             virials=virials,
+             dipole=dipole,
+             charges=charges,
+diff --git a/mace/data/utils.py b/mace/data/utils.py
+index 9a701fc..dbd98e0 100644
+--- a/mace/data/utils.py
++++ b/mace/data/utils.py
+@@ -20,9 +20,11 @@ Forces = np.ndarray  # [..., 3]
+ Stress = np.ndarray  # [6, ]
+ Virials = np.ndarray  # [3,3]
+ Charges = np.ndarray  # [..., 1]
++Cluster = np.ndarray  # [..., 1]
+ Cell = np.ndarray  # [3,3]
+ Pbc = tuple  # (3,)
+ 
++
+ DEFAULT_CONFIG_TYPE = "Default"
+ DEFAULT_CONFIG_TYPE_WEIGHTS = {DEFAULT_CONFIG_TYPE: 1.0}
+ 
+@@ -39,12 +41,13 @@ class Configuration:
+     charges: Optional[Charges] = None  # atomic unit
+     cell: Optional[Cell] = None
+     pbc: Optional[Pbc] = None
+-
++    cluster: Optional[Cluster] = None  # cluster index of atom
+     weight: float = 1.0  # weight of config in loss
+     energy_weight: float = 1.0  # weight of config energy in loss
+     forces_weight: float = 1.0  # weight of config forces in loss
+     stress_weight: float = 1.0  # weight of config stress in loss
+     virials_weight: float = 1.0  # weight of config virial in loss
++    cluster_weight: float = 1.0  # weight of config cluster in loss
+     config_type: Optional[str] = DEFAULT_CONFIG_TYPE  # config_type of config
+ 
+ 
+@@ -74,6 +77,7 @@ def config_from_atoms_list(
+     energy_key="energy",
+     forces_key="forces",
+     stress_key="stress",
++    cluster_key="cluster_id",
+     virials_key="virials",
+     dipole_key="dipole",
+     charges_key="charges",
+@@ -91,6 +95,7 @@ def config_from_atoms_list(
+                 energy_key=energy_key,
+                 forces_key=forces_key,
+                 stress_key=stress_key,
++                cluster_key=cluster_key,
+                 virials_key=virials_key,
+                 dipole_key=dipole_key,
+                 charges_key=charges_key,
+@@ -105,6 +110,7 @@ def config_from_atoms(
+     energy_key="energy",
+     forces_key="forces",
+     stress_key="stress",
++    cluster_key="cluster_id",
+     virials_key="virials",
+     dipole_key="dipole",
+     charges_key="charges",
+@@ -117,6 +123,7 @@ def config_from_atoms(
+     energy = atoms.info.get(energy_key, None)  # eV
+     forces = atoms.arrays.get(forces_key, None)  # eV / Ang
+     stress = atoms.info.get(stress_key, None)  # eV / Ang
++    cluster = atoms.arrays.get(cluster_key, None)
+     virials = atoms.info.get(virials_key, None)
+     dipole = atoms.info.get(dipole_key, None)  # Debye
+     # Charges default to 0 instead of None if not found
+@@ -133,6 +140,7 @@ def config_from_atoms(
+     energy_weight = atoms.info.get("config_energy_weight", 1.0)
+     forces_weight = atoms.info.get("config_forces_weight", 1.0)
+     stress_weight = atoms.info.get("config_stress_weight", 1.0)
++    cluster_weight = atoms.info.get("config_cluster_weight", 1.0)
+     virials_weight = atoms.info.get("config_virials_weight", 1.0)
+ 
+     # fill in missing quantities but set their weight to 0.0
+@@ -145,6 +153,9 @@ def config_from_atoms(
+     if stress is None:
+         stress = np.zeros(6)
+         stress_weight = 0.0
++    if cluster is None:
++        cluster = np.zeros(len(atoms))
++        cluster_weight = 0.0
+     if virials is None:
+         virials = np.zeros((3, 3))
+         virials_weight = 0.0
+@@ -155,6 +166,7 @@ def config_from_atoms(
+         energy=energy,
+         forces=forces,
+         stress=stress,
++        cluster=cluster,
+         virials=virials,
+         dipole=dipole,
+         charges=charges,
+@@ -162,6 +174,7 @@ def config_from_atoms(
+         energy_weight=energy_weight,
+         forces_weight=forces_weight,
+         stress_weight=stress_weight,
++        cluster_weight=cluster_weight,
+         virials_weight=virials_weight,
+         config_type=config_type,
+         pbc=pbc,
+@@ -191,6 +204,7 @@ def load_from_xyz(
+     energy_key: str = "energy",
+     forces_key: str = "forces",
+     stress_key: str = "stress",
++    cluster_key: str = "cluster_id",
+     virials_key: str = "virials",
+     dipole_key: str = "dipole",
+     charges_key: str = "charges",
+@@ -236,6 +250,7 @@ def load_from_xyz(
+         energy_key=energy_key,
+         forces_key=forces_key,
+         stress_key=stress_key,
++        cluster_key=cluster_key,
+         virials_key=virials_key,
+         dipole_key=dipole_key,
+         charges_key=charges_key,
+diff --git a/mace/modules/__init__.py b/mace/modules/__init__.py
+index 65143b7..d3d0a9d 100644
+--- a/mace/modules/__init__.py
++++ b/mace/modules/__init__.py
+@@ -23,6 +23,8 @@ from .loss import (
+     DipoleSingleLoss,
+     WeightedEnergyForcesDipoleLoss,
+     WeightedEnergyForcesLoss,
++    WeightedEnergyForcesLossForceCluster,
++    WeightedEnergyForcesStressLossForceCluster,
+     WeightedEnergyForcesStressLoss,
+     WeightedEnergyForcesVirialsLoss,
+     WeightedForcesLoss,
+@@ -87,6 +89,8 @@ __all__ = [
+     "AtomicDipolesMACE",
+     "EnergyDipolesMACE",
+     "WeightedEnergyForcesLoss",
++    "WeightedEnergyForcesLossForceCluster",
++    "WeightedEnergyForcesStressLossForceCluster",
+     "WeightedForcesLoss",
+     "WeightedEnergyForcesVirialsLoss",
+     "WeightedEnergyForcesStressLoss",
+diff --git a/mace/modules/blocks.py b/mace/modules/blocks.py
+index 382831b..850ce3e 100644
+--- a/mace/modules/blocks.py
++++ b/mace/modules/blocks.py
+@@ -350,8 +350,8 @@ class AgnosticNonlinearInteractionBlock(InteractionBlock):
+             self.node_feats_irreps, self.edge_attrs_irreps, self.target_irreps
+         )
+         self.conv_tp = o3.TensorProduct(
+-            self.node_feats_irreps,
+-            self.edge_attrs_irreps,
++            self.node_feats_irreps,  # h,
++            self.edge_attrs_irreps,  # Y(r)
+             irreps_mid,
+             instructions=instructions,
+             shared_weights=False,
+@@ -363,7 +363,7 @@ class AgnosticNonlinearInteractionBlock(InteractionBlock):
+         self.conv_tp_weights = nn.FullyConnectedNet(
+             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
+             torch.nn.functional.silu,
+-        )
++        )  # Radial basis (RW)
+ 
+         # Linear
+         irreps_mid = irreps_mid.simplify()
+@@ -389,7 +389,7 @@ class AgnosticNonlinearInteractionBlock(InteractionBlock):
+         sender = edge_index[0]
+         receiver = edge_index[1]
+         num_nodes = node_feats.shape[0]
+-        tp_weights = self.conv_tp_weights(edge_feats)
++        tp_weights = self.conv_tp_weights(edge_feats)  # R(r)
+         node_feats = self.linear_up(node_feats)
+         mji = self.conv_tp(
+             node_feats[sender], edge_attrs, tp_weights
+diff --git a/mace/modules/loss.py b/mace/modules/loss.py
+index 7c8f5ad..ebee51d 100644
+--- a/mace/modules/loss.py
++++ b/mace/modules/loss.py
+@@ -5,9 +5,11 @@
+ ###########################################################################################
+ 
+ import torch
++import logging
+ 
+ from mace.tools import TensorDict
+ from mace.tools.torch_geometric import Batch
++from mace.tools.scatter import scatter_sum
+ 
+ 
+ def mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
+@@ -27,6 +29,18 @@ def weighted_mean_squared_error_energy(ref: Batch, pred: TensorDict) -> torch.Te
+     )  # []
+ 
+ 
++def weighted_mean_square_error_force_cluster(
++    ref: Batch, pred: TensorDict
++) -> torch.Tensor:
++    cluster_forces_ref = scatter_sum(
++        ref["forces"], torch.unique(ref.cluster, return_inverse=True)[1], dim=0
++    )
++    cluster_forces_pred = scatter_sum(
++        pred["forces"], torch.unique(ref.cluster, return_inverse=True)[1], dim=0
++    )
++    return torch.mean(torch.square(cluster_forces_ref - cluster_forces_pred))
++
++
+ def weighted_mean_squared_stress(ref: Batch, pred: TensorDict) -> torch.Tensor:
+     # energy: [n_graphs, ]
+     configs_weight = ref.weight.view(-1, 1, 1)  # [n_graphs, ]
+@@ -101,6 +115,45 @@ class WeightedEnergyForcesLoss(torch.nn.Module):
+         )
+ 
+ 
++class WeightedEnergyForcesLossForceCluster(torch.nn.Module):
++    def __init__(
++        self, energy_weight=1.0, forces_weight=1.0, cluster_weight=1.0
++    ) -> None:
++        super().__init__()
++        self.register_buffer(
++            "energy_weight",
++            torch.tensor(energy_weight, dtype=torch.get_default_dtype()),
++        )
++        self.register_buffer(
++            "forces_weight",
++            torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
++        )
++        self.register_buffer(
++            "cluster_weight",
++            torch.tensor(cluster_weight, dtype=torch.get_default_dtype()),
++        )
++
++    def forward(self, ref: Batch, pred: TensorDict) -> torch.Tensor:
++        tloss = (
++            self.energy_weight * weighted_mean_squared_error_energy(ref, pred)
++            + self.forces_weight * mean_squared_error_forces(ref, pred)
++            + self.cluster_weight * weighted_mean_square_error_force_cluster(ref, pred)
++        )
++        # logging.info(
++        #     f"Cluster weight: {self.cluster_weight}, "
++        #     f"Cluster error: {weighted_mean_square_error_force_cluster(ref, pred)},"
++        #     f" Total loss: {tloss}"
++        # )
++        return tloss
++
++    def __repr__(self):
++        return (
++            f"{self.__class__.__name__}(energy_weight={self.energy_weight:.3f}, "
++            f"forces_weight={self.forces_weight:.3f})"
++            f"cluster_weight={self.cluster_weight:.3f})"
++        )
++
++
+ class WeightedForcesLoss(torch.nn.Module):
+     def __init__(self, forces_weight=1.0) -> None:
+         super().__init__()
+@@ -116,6 +169,49 @@ class WeightedForcesLoss(torch.nn.Module):
+         return f"{self.__class__.__name__}(" f"forces_weight={self.forces_weight:.3f})"
+ 
+ 
++class WeightedEnergyForcesStressLossForceCluster(torch.nn.Module):
++    def __init__(
++        self,
++        energy_weight=1.0,
++        forces_weight=1.0,
++        stress_weight=1.0,
++        cluster_weight=1.0,
++    ) -> None:
++        super().__init__()
++        self.register_buffer(
++            "energy_weight",
++            torch.tensor(energy_weight, dtype=torch.get_default_dtype()),
++        )
++        self.register_buffer(
++            "forces_weight",
++            torch.tensor(forces_weight, dtype=torch.get_default_dtype()),
++        )
++        self.register_buffer(
++            "stress_weight",
++            torch.tensor(stress_weight, dtype=torch.get_default_dtype()),
++        )
++        self.register_buffer(
++            "cluster_weight",
++            torch.tensor(cluster_weight, dtype=torch.get_default_dtype()),
++        )
++
++    def forward(self, ref: Batch, pred: TensorDict) -> torch.Tensor:
++        return (
++            self.energy_weight * weighted_mean_squared_error_energy(ref, pred)
++            + self.forces_weight * mean_squared_error_forces(ref, pred)
++            + self.stress_weight * weighted_mean_squared_stress(ref, pred)
++            + self.cluster_weight * weighted_mean_square_error_force_cluster(ref, pred)
++        )
++
++    def __repr__(self):
++        return (
++            f"{self.__class__.__name__}(energy_weight={self.energy_weight:.3f}, "
++            f"forces_weight={self.forces_weight:.3f}, "
++            f"stress_weight={self.stress_weight:.3f}, "
++            f"cluster_weight={self.cluster_weight:.3f})"
++        )
++
++
+ class WeightedEnergyForcesStressLoss(torch.nn.Module):
+     def __init__(self, energy_weight=1.0, forces_weight=1.0, stress_weight=1.0) -> None:
+         super().__init__()
+diff --git a/mace/modules/models.py b/mace/modules/models.py
+index 23bdc85..c8d46b7 100644
+--- a/mace/modules/models.py
++++ b/mace/modules/models.py
+@@ -40,7 +40,7 @@ from .utils import (
+ class MACE(torch.nn.Module):
+     def __init__(
+         self,
+-        r_max: float,
++        r_max: List[float],
+         num_bessel: int,
+         num_polynomial_cutoff: int,
+         max_ell: int,
+@@ -53,7 +53,7 @@ class MACE(torch.nn.Module):
+         atomic_energies: np.ndarray,
+         avg_num_neighbors: float,
+         atomic_numbers: List[int],
+-        correlation: int,
++        correlations: List[int],
+         gate: Optional[Callable],
+         radial_MLP: Optional[List[int]] = None,
+     ):
+@@ -67,18 +67,24 @@ class MACE(torch.nn.Module):
+         self.register_buffer(
+             "num_interactions", torch.tensor(num_interactions, dtype=torch.int64)
+         )
++        self.r_max = r_max
++
++        # Radial embedding, interactions and readouts
++        self.radial_embeddings = torch.nn.ModuleList()
++
+         # Embedding
+         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
+         node_feats_irreps = o3.Irreps([(hidden_irreps.count(o3.Irrep(0, 1)), (0, 1))])
+         self.node_embedding = LinearNodeEmbeddingBlock(
+             irreps_in=node_attr_irreps, irreps_out=node_feats_irreps
+         )
+-        self.radial_embedding = RadialEmbeddingBlock(
+-            r_max=r_max,
++        radial_embedding_first = RadialEmbeddingBlock(
++            r_max=r_max[0],
+             num_bessel=num_bessel,
+             num_polynomial_cutoff=num_polynomial_cutoff,
+         )
+-        edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
++        edge_feats_irreps_first = o3.Irreps(f"{radial_embedding_first.out_dim}x0e")
++        self.radial_embeddings.append(radial_embedding_first)
+ 
+         sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
+         num_features = hidden_irreps.count(o3.Irrep(0, 1))
+@@ -95,7 +101,7 @@ class MACE(torch.nn.Module):
+             node_attrs_irreps=node_attr_irreps,
+             node_feats_irreps=node_feats_irreps,
+             edge_attrs_irreps=sh_irreps,
+-            edge_feats_irreps=edge_feats_irreps,
++            edge_feats_irreps=edge_feats_irreps_first,
+             target_irreps=interaction_irreps,
+             hidden_irreps=hidden_irreps,
+             avg_num_neighbors=avg_num_neighbors,
+@@ -112,7 +118,7 @@ class MACE(torch.nn.Module):
+         prod = EquivariantProductBasisBlock(
+             node_feats_irreps=node_feats_irreps_out,
+             target_irreps=hidden_irreps,
+-            correlation=correlation,
++            correlation=correlations[0],
+             num_elements=num_elements,
+             use_sc=use_sc_first,
+         )
+@@ -128,6 +134,19 @@ class MACE(torch.nn.Module):
+                 )  # Select only scalars for last layer
+             else:
+                 hidden_irreps_out = hidden_irreps
++
++            # Only add new radial embeding if r_max changes
++            if r_max[i + 1] == r_max[i]:
++                radial_embedding = self.radial_embeddings[-1]
++            else:
++                radial_embedding = RadialEmbeddingBlock(
++                    r_max=r_max[i + 1],
++                    num_bessel=num_bessel,
++                    num_polynomial_cutoff=num_polynomial_cutoff,
++                )
++            edge_feats_irreps = o3.Irreps(f"{radial_embedding.out_dim}x0e")
++            self.radial_embeddings.append(radial_embedding)
++
+             inter = interaction_cls(
+                 node_attrs_irreps=node_attr_irreps,
+                 node_feats_irreps=hidden_irreps,
+@@ -142,7 +161,7 @@ class MACE(torch.nn.Module):
+             prod = EquivariantProductBasisBlock(
+                 node_feats_irreps=interaction_irreps,
+                 target_irreps=hidden_irreps_out,
+-                correlation=correlation,
++                correlation=correlations[i+1],
+                 num_elements=num_elements,
+                 use_sc=True,
+             )
+@@ -200,14 +219,20 @@ class MACE(torch.nn.Module):
+             shifts=data["shifts"],
+         )
+         edge_attrs = self.spherical_harmonics(vectors)
+-        edge_feats = self.radial_embedding(lengths)
+ 
+         # Interactions
+         energies = [e0]
+         node_energies_list = [node_e0]
+-        for interaction, product, readout in zip(
+-            self.interactions, self.products, self.readouts
++        for (interaction, product, readout, radial_embedding) in zip(
++            self.interactions, self.products, self.readouts, self.radial_embeddings
+         ):
++            vectorsi, lengthsi = get_edge_vectors_and_lengths(
++                positions=data["positions"],
++                edge_index=data["edge_index"],
++                shifts=data["shifts"],
++            )
++            edge_attrsi = self.spherical_harmonics(vectors)
++            edge_feats = radial_embedding(lengths)
+             node_feats, sc = interaction(
+                 node_attrs=data["node_attrs"],
+                 node_feats=node_feats,
+@@ -244,10 +269,10 @@ class MACE(torch.nn.Module):
+             compute_virials=compute_virials,
+             compute_stress=compute_stress,
+         )
+-
+         return {
+             "energy": total_energy,
+             "node_energy": node_energy,
++            'node_layer_energy': node_energy_contributions,
+             "contributions": contributions,
+             "forces": forces,
+             "virials": virials,
+@@ -307,7 +332,11 @@ class ScaleShiftMACE(MACE):
+             src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs
+         )  # [n_graphs,]
+ 
++
+         # Embeddings
++
++        # First get all spherical harmonic
++
+         node_feats = self.node_embedding(data["node_attrs"])
+         vectors, lengths = get_edge_vectors_and_lengths(
+             positions=data["positions"],
+@@ -315,19 +344,25 @@ class ScaleShiftMACE(MACE):
+             shifts=data["shifts"],
+         )
+         edge_attrs = self.spherical_harmonics(vectors)
+-        edge_feats = self.radial_embedding(lengths)
+ 
+         # Interactions
+         node_es_list = []
+-        for interaction, product, readout in zip(
+-            self.interactions, self.products, self.readouts
+-        ):
++        for i, (interaction, product, readout, radial_embedding) in enumerate(zip(            self.interactions, self.products, self.readouts, self.radial_embeddings        )):
++            edge_index_mask = data["edge_index_mask"][i, :]
++            edge_attrsi = edge_attrs[edge_index_mask]
++
++            # Only recaclulate radial embedding if r_max changes
++            if i > 0 and self.r_max[i] == self.r_max[i - 1]:
++                pass
++            else:
++                edge_featsi = radial_embedding(lengths[edge_index_mask])
++
+             node_feats, sc = interaction(
+                 node_attrs=data["node_attrs"],
+                 node_feats=node_feats,
+-                edge_attrs=edge_attrs,
+-                edge_feats=edge_feats,
+-                edge_index=data["edge_index"],
++                edge_attrs=edge_attrsi,
++                edge_feats=edge_featsi,
++                edge_index=data["edge_index"][:,edge_index_mask],
+             )
+             node_feats = product(
+                 node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]
+@@ -339,6 +374,7 @@ class ScaleShiftMACE(MACE):
+             torch.stack(node_es_list, dim=0), dim=0
+         )  # [n_nodes, ]
+         node_inter_es = self.scale_shift(node_inter_es)
++        node_layer_node_es = self.scale_shift(torch.stack(node_es_list, dim=0))
+ 
+         # Sum over nodes in graph
+         inter_e = scatter_sum(
+@@ -363,6 +399,7 @@ class ScaleShiftMACE(MACE):
+         output = {
+             "energy": total_energy,
+             "node_energy": node_energy,
++            'node_layer_energy': node_layer_node_es,
+             "interaction_energy": inter_e,
+             "forces": forces,
+             "virials": virials,
+diff --git a/mace/modules/utils.py b/mace/modules/utils.py
+index 66803bc..093bb3c 100644
+--- a/mace/modules/utils.py
++++ b/mace/modules/utils.py
+@@ -226,12 +226,10 @@ def compute_mean_rms_energy_forces(
+ 
+ def compute_avg_num_neighbors(data_loader: torch.utils.data.DataLoader) -> float:
+     num_neighbors = []
+-
+     for batch in data_loader:
+         _, receivers = batch.edge_index
+         _, counts = torch.unique(receivers, return_counts=True)
+         num_neighbors.append(counts)
+-
+     avg_num_neighbors = torch.mean(
+         torch.cat(num_neighbors, dim=0).type(torch.get_default_dtype())
+     )
+diff --git a/mace/tools/arg_parser.py b/mace/tools/arg_parser.py
+index 2250385..b513064 100644
+--- a/mace/tools/arg_parser.py
++++ b/mace/tools/arg_parser.py
+@@ -65,6 +65,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
+             "DipoleRMSE",
+             "DipoleMAE",
+             "EnergyDipoleRMSE",
++            "PerAtomRMSECluster",
++            "PerAtomRMSEstressCluster",
+         ],
+         default="PerAtomRMSE",
+     )
+@@ -84,7 +86,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
+         ],
+     )
+     parser.add_argument(
+-        "--r_max", help="distance cutoff (in Ang)", type=float, default=5.0
++        "--r_max", help="distance cutoff (in Ang). Float or list of values for each layer", type=str, default=5.0
+     )
+     parser.add_argument(
+         "--num_radial_basis",
+@@ -122,7 +124,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
+         "--max_ell", help=r"highest \ell of spherical harmonics", type=int, default=3
+     )
+     parser.add_argument(
+-        "--correlation", help="correlation order at each layer", type=int, default=3
++        "--correlation",
++        help="correlation order at each layer. "
++        "Can be list of values for each layer or single int ",
++        type=str,
++        default=3,
+     )
+     parser.add_argument(
+         "--num_interactions", help="number of interactions", type=int, default=2
+@@ -251,6 +257,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
+         type=str,
+         default="stress",
+     )
++    parser.add_argument(
++        "--cluster_key",
++        help="Key of atom clusters in training xyz. ""Needed for training on eg. cluster forces. " "Indices are not allowed to repeat accross configurations.",
++        type=str,
++        default="cluster_id",
++    )
+     parser.add_argument(
+         "--dipole_key",
+         help="Key of reference dipoles in training xyz",
+@@ -272,6 +284,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
+         choices=[
+             "ef",
+             "weighted",
++            "weighted_cluster",
++            "weighted_cluster_stress",
+             "forces_only",
+             "virials",
+             "stress",
+@@ -301,12 +315,21 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
+     parser.add_argument(
+         "--virials_weight", help="weight of virials loss", type=float, default=1.0
+     )
++    parser.add_argument(
++        "--cluster_weight", help="weight of cluster loss", type=float, default=0.0
++    )
+     parser.add_argument(
+         "--swa_virials_weight",
+         help="weight of virials loss after starting swa",
+         type=float,
+         default=10.0,
+     )
++    parser.add_argument(
++        "--swa_cluster_weight",
++        help="weight of cluster loss after starting swa",
++        type=float,
++        default=0.0,
++    )
+     parser.add_argument(
+         "--stress_weight", help="weight of virials loss", type=float, default=1.0
+     )
+diff --git a/mace/tools/scripts_utils.py b/mace/tools/scripts_utils.py
+index a4d2448..d731d1d 100644
+--- a/mace/tools/scripts_utils.py
++++ b/mace/tools/scripts_utils.py
+@@ -34,6 +34,7 @@ def get_dataset_from_xyz(
+     forces_key: str = "forces",
+     stress_key: str = "stress",
+     virials_key: str = "virials",
++    cluster_key: str = "cluster_id",
+     dipole_key: str = "dipoles",
+     charges_key: str = "charges",
+ ) -> Tuple[SubsetCollection, Optional[Dict[int, float]]]:
+@@ -60,6 +61,7 @@ def get_dataset_from_xyz(
+             forces_key=forces_key,
+             stress_key=stress_key,
+             virials_key=virials_key,
++            cluster_key=cluster_key,
+             dipole_key=dipole_key,
+             charges_key=charges_key,
+             extract_atomic_energies=False,
+@@ -83,6 +85,9 @@ def get_dataset_from_xyz(
+             config_type_weights=config_type_weights,
+             energy_key=energy_key,
+             forces_key=forces_key,
++            stress_key=stress_key,
++            virials_key=virials_key,
++            cluster_key=cluster_key,
+             dipole_key=dipole_key,
+             charges_key=charges_key,
+             extract_atomic_energies=False,
+@@ -155,6 +160,15 @@ def create_error_table(
+             "RMSE F / meV / A",
+             "relative F RMSE %",
+         ]
++    elif table_type == "PerAtomRMSECluster":
++        table.field_names = [
++            "config_type",
++            "RMSE E / meV / atom",
++            "RMSE F / meV / A",
++            "relative F RMSE %",
++            "RMSE Cluster / meV/A",
++            "relative Cluster RMSE %",
++        ]
+     elif table_type == "PerAtomRMSEstressvirials":
+         table.field_names = [
+             "config_type",
+@@ -163,6 +177,16 @@ def create_error_table(
+             "relative F RMSE %",
+             "RMSE Stress (Virials) / meV / A (A^3)",
+         ]
++    elif table_type == "PerAtomRMSEstressCluster":
++        table.field_names = [
++            "config_type",
++            "RMSE E / meV / atom",
++            "RMSE F / meV / A",
++            "relative F RMSE %",
++            "RMSE Stress / meV / A",
++            "RMSE Cluster / meV/A",
++            "relative Cluster RMSE %",
++        ]
+     elif table_type == "TotalMAE":
+         table.field_names = [
+             "config_type",
+@@ -201,7 +225,7 @@ def create_error_table(
+     for name, subset in all_collections:
+         data_loader = torch_geometric.dataloader.DataLoader(
+             dataset=[
+-                AtomicData.from_config(config, z_table=z_table, cutoff=r_max)
++                AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
+                 for config in subset
+             ],
+             batch_size=valid_batch_size,
+@@ -219,11 +243,23 @@ def create_error_table(
+         )
+         if log_wandb:
+             wandb_log_dict = {
+-                name
++                "final-models/"
++                + name
+                 + "_final_rmse_e_per_atom": metrics["rmse_e_per_atom"]
+                 * 1e3,  # meV / atom
+-                name + "_final_rmse_f": metrics["rmse_f"] * 1e3,  # meV / A
+-                name + "_final_rel_rmse_f": metrics["rel_rmse_f"],
++                "final-models/"
++                + name
++                + "_final_rmse_f": metrics["rmse_f"] * 1e3,  # meV / A
++                "final-models/" + name + "_final_rel_rmse_f": metrics["rel_rmse_f"],
++                # Also add all mae metrics
++                "final-models/"
++                + name
++                + "_final_mae_e_per_atom": metrics["mae_e_per_atom"]
++                * 1e3,  # meV / atom
++                "final-models/"
++                + name
++                + "_final_mae_f": metrics["mae_f"] * 1e3,  # meV / A
++                "final-models/" + name + "_final_rel_mae_f": metrics["rel_mae_f"],
+             }
+             wandb.log(wandb_log_dict)
+         if table_type == "TotalRMSE":
+@@ -244,6 +280,50 @@ def create_error_table(
+                     f"{metrics['rel_rmse_f']:.2f}",
+                 ]
+             )
++        elif table_type == "PerAtomRMSECluster":
++            table.add_row(
++                [
++                    name,
++                    f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
++                    f"{metrics['rmse_f'] * 1000:.1f}",
++                    f"{metrics['rel_rmse_f']:.2f}",
++                    f"{metrics['rmse_cluster_force'] * 1000:.1f}",
++                    f"{metrics['rel_rmse_cluster_force']:.2f}",
++                ]
++            )
++            # save all aditional results to wandb
++            wandb_log_dict.update(
++                {
++                    name + "_final_rmse_cluster_force": metrics["rmse_cluster_force"],
++                    name
++                    + "_final_rel_rmse_cluster_force": metrics[
++                        "rel_rmse_cluster_force"
++                    ],
++                }
++            )
++        elif table_type == "PerAtomRMSEstressCluster":
++            table.add_row(
++                [
++                    name,
++                    f"{metrics['rmse_e_per_atom'] * 1000:.1f}",
++                    f"{metrics['rmse_f'] * 1000:.1f}",
++                    f"{metrics['rel_rmse_f']:.2f}",
++                    f"{metrics['rmse_stress'] * 1000:.1f}",
++                    f"{metrics['rmse_cluster_force'] * 1000:.1f}",
++                    f"{metrics['rel_rmse_cluster_force']:.2f}",
++                ]
++            )
++            # save all aditional results to wandb
++            wandb_log_dict.update(
++                {
++                    name + "_final_rmse_stress": metrics["rmse_stress"],
++                    name + "_final_rmse_cluster_force": metrics["rmse_cluster_force"],
++                    name
++                    + "_final_rel_rmse_cluster_force": metrics[
++                        "rel_rmse_cluster_force"
++                    ],
++                }
++            )
+         elif (
+             table_type == "PerAtomRMSEstressvirials"
+             and metrics["rmse_stress"] is not None
+@@ -315,4 +395,6 @@ def create_error_table(
+                     f"{metrics['rel_rmse_mu']:.1f}",
+                 ]
+             )
++        if log_wandb:
++            wandb.log(wandb_log_dict)
+     return table
+diff --git a/mace/tools/torch_geometric/batch.py b/mace/tools/torch_geometric/batch.py
+index be5ec9d..80121b6 100644
+--- a/mace/tools/torch_geometric/batch.py
++++ b/mace/tools/torch_geometric/batch.py
+@@ -116,6 +116,7 @@ class Batch(Data):
+                             torch.full((size,), i, dtype=torch.long, device=device)
+                         )
+ 
++
+             if hasattr(data, "__num_nodes__"):
+                 num_nodes_list.append(data.__num_nodes__)
+             else:
+@@ -138,6 +139,7 @@ class Batch(Data):
+         for key in batch.keys:
+             items = batch[key]
+             item = items[0]
++            # currently checks if index or face in key. If true -1, else 0
+             cat_dim = ref_data.__cat_dim__(key, item)
+             cat_dim = 0 if cat_dim is None else cat_dim
+             if isinstance(item, Tensor):
+diff --git a/mace/tools/torch_tools.py b/mace/tools/torch_tools.py
+index e2b6a22..2252886 100644
+--- a/mace/tools/torch_tools.py
++++ b/mace/tools/torch_tools.py
+@@ -124,6 +124,8 @@ def voigt_to_matrix(t: torch.Tensor):
+     )
+ 
+ 
++
++
+ def init_wandb(project: str, entity: str, name: str, config: dict):
+     import wandb
+ 
+diff --git a/mace/tools/train.py b/mace/tools/train.py
+index 545f077..cec377a 100644
+--- a/mace/tools/train.py
++++ b/mace/tools/train.py
+@@ -26,6 +26,7 @@ from .utils import (
+     compute_rel_rmse,
+     compute_rmse,
+ )
++from mace.tools.scatter import scatter_sum
+ 
+ 
+ @dataclasses.dataclass
+@@ -131,6 +132,13 @@ def train(
+                 logging.info(
+                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A"
+                 )
++            elif log_errors == "PerAtomRMSECluster":
++                error_e = eval_metrics["rmse_e_per_atom"] * 1e3
++                error_f = eval_metrics["rmse_f"] * 1e3
++                error_cluster = eval_metrics["rmse_cluster_force"] * 1e3
++                logging.info(
++                    f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_cluster_force={error_cluster:.1f} meV / A"
++                )
+             elif (
+                 log_errors == "PerAtomRMSEstressvirials"
+                 and eval_metrics["rmse_stress_per_atom"] is not None
+@@ -141,6 +149,14 @@ def train(
+                 logging.info(
+                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_stress_per_atom={error_stress:.1f} meV / A^3"
+                 )
++            elif log_errors == "PerAtomRMSEstressCluster":
++                error_e = eval_metrics["rmse_e_per_atom"] * 1e3
++                error_f = eval_metrics["rmse_f"] * 1e3
++                error_stress = eval_metrics["rmse_stress_per_atom"] * 1e3
++                error_cluster = eval_metrics["rmse_cluster_force"] * 1e3
++                logging.info(
++                    f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_stress_per_atom={error_stress:.4f} meV / A^3, RMSE_cluster_force={error_cluster:.1f} meV / A"
++                )
+             elif (
+                 log_errors == "PerAtomRMSEstressvirials"
+                 and eval_metrics["rmse_virials_per_atom"] is not None
+@@ -182,11 +198,15 @@ def train(
+                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_Mu_per_atom={error_mu:.2f} mDebye"
+                 )
+             if log_wandb:
++                eval_metrics_valid_prefix = {
++                    f"all-data/valid_{k}": v for k, v in eval_metrics.items()
++                }
+                 wandb_log_dict = {
+                     "epoch": epoch,
+                     "valid_loss": valid_loss,
+                     "valid_rmse_e_per_atom": eval_metrics["rmse_e_per_atom"],
+                     "valid_rmse_f": eval_metrics["rmse_f"],
++                    **eval_metrics_valid_prefix,
+                 }
+                 wandb.log(wandb_log_dict)
+             if valid_loss >= lowest_loss:
+@@ -287,6 +307,9 @@ def evaluate(
+     delta_mus_list = []
+     delta_mus_per_atom_list = []
+     mus_list = []
++    cluster_list = []
++    delta_cluster_force = []
++    cluster_force_list = []
+     batch = None  # for pylint
+ 
+     start_time = time.time()
+@@ -338,6 +361,22 @@ def evaluate(
+                 / (batch.ptr[1:] - batch.ptr[:-1]).unsqueeze(-1)
+             )
+             mus_list.append(batch.dipole)
++        if batch.cluster is not None:
++            cluster_computed = True
++            cluster_forces_ref = scatter_sum(
++                batch["forces"],
++                torch.unique(batch.cluster, return_inverse=True)[1],
++                dim=0,
++            )
++            cluster_forces_pred = scatter_sum(
++                output["forces"],
++                torch.unique(batch.cluster, return_inverse=True)[1],
++                dim=0,
++            )
++
++            delta_cluster_force.append(cluster_forces_ref - cluster_forces_pred)
++            cluster_force_list.append(cluster_forces_ref)
++            cluster_list.append(batch.cluster)
+ 
+     avg_loss = total_loss / len(data_loader)
+ 
+@@ -386,6 +425,15 @@ def evaluate(
+         aux["rmse_mu_per_atom"] = compute_rmse(delta_mus_per_atom)
+         aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
+         aux["q95_mu"] = compute_q95(delta_mus)
++    if cluster_computed:
++        delta_cluster_force = to_numpy(torch.cat(delta_cluster_force, dim=0))
++        cluster_forces_all = to_numpy(torch.cat(cluster_force_list, dim=0))
++        aux["mae_cluster_force"] = compute_mae(delta_cluster_force)
++        aux["rmse_cluster_force"] = compute_rmse(delta_cluster_force)
++        aux["q95_cluster_force"] = compute_q95(delta_cluster_force)
++        aux["rel_rmse_cluster_force"] = compute_rel_rmse(
++            delta_cluster_force, cluster_forces_all
++        )
+ 
+     aux["time"] = time.time() - start_time
+ 
+diff --git a/scripts/logs/debugging_run-0.log b/scripts/logs/debugging_run-0.log
+new file mode 100644
+index 0000000..2ec11fd
+--- /dev/null
++++ b/scripts/logs/debugging_run-0.log
+@@ -0,0 +1,4 @@
++2023-02-21 17:33:36.870 INFO: MACE version: 0.2.0
++2023-02-21 17:33:36.872 INFO: Configuration: Namespace(name='debugging', seed=0, log_dir='logs', model_dir='.', checkpoints_dir='checkpoints', results_dir='results', downloads_dir='downloads', device='cpu', default_dtype='float64', log_level='INFO', error_table='PerAtomRMSEstressvirials', model='MACE', r_max=5.0, num_radial_basis=8, num_cutoff_basis=5, interaction='RealAgnosticResidualInteractionBlock', interaction_first='RealAgnosticResidualInteractionBlock', max_ell=3, correlation=3, num_interactions=2, MLP_irreps='16x0e', hidden_irreps='128x0e + 128x1o', num_channels=None, max_L=None, gate='silu', scaling='rms_forces_scaling', avg_num_neighbors=1, compute_avg_num_neighbors=True, compute_stress=True, compute_forces=True, train_file='f3-it0-dataset-no-mols.xyz', valid_file=None, valid_fraction=0.1, test_file='DFT_4-test-first-sample.xyz', E0s='average', energy_key='ctp_energy', forces_key='ctp_forces', virials_key='virials', stress_key='ctp_stress2', dipole_key='dipole', charges_key='charges', loss='stress', forces_weight=10.0, swa_forces_weight=10.0, energy_weight=1.0, swa_energy_weight=100.0, virials_weight=1.0, cluster_weight=0.0, swa_virials_weight=10.0, swa_cluster_weight=0.0, stress_weight=1.0, swa_stress_weight=10.0, dipole_weight=1.0, swa_dipole_weight=1.0, config_type_weights='{Default:1.0}', optimizer='adam', batch_size=2, valid_batch_size=10, lr=0.01, swa_lr=0.0001, weight_decay=5e-07, amsgrad=True, scheduler='ReduceLROnPlateau', lr_factor=0.8, scheduler_patience=50, lr_scheduler_gamma=0.9993, swa=True, start_swa=2, ema=True, ema_decay=0.99, max_num_epochs=4, patience=50, eval_interval=2, keep_checkpoints=False, restart_latest=True, save_cpu=False, clip_grad=10.0, wandb=True, wandb_project='clustering', wandb_entity='larsleons', wandb_name='debugging', wandb_log_hypers=['num_channels', 'max_L', 'correlation', 'lr', 'swa_lr', 'weight_decay', 'batch_size', 'max_num_epochs', 'start_swa', 'energy_weight', 'forces_weight'])
++2023-02-21 17:33:36.872 INFO: Using CPU
++2023-02-21 17:33:36.873 WARNING: Config type weights not specified correctly (malformed node or string: <ast.Name object at 0x2b8822bccb50>), using Default
+diff --git a/scripts/run_train.py b/scripts/run_train.py
+index 219295e..e19005c 100644
+--- a/scripts/run_train.py
++++ b/scripts/run_train.py
+@@ -61,6 +61,7 @@ def main() -> None:
+         energy_key=args.energy_key,
+         forces_key=args.forces_key,
+         stress_key=args.stress_key,
++        cluster_key=args.cluster_key,
+         virials_key=args.virials_key,
+         dipole_key=args.dipole_key,
+         charges_key=args.charges_key,
+@@ -129,9 +130,28 @@ def main() -> None:
+         )
+         logging.info(f"Atomic energies: {atomic_energies.tolist()}")
+ 
++    # Support different settings for each layer
++    r_max = ast.literal_eval(args.r_max)
++    correlation = ast.literal_eval(args.correlation)
++
++    if isinstance(r_max, (list, tuple, np.ndarray)):
++        r_max = torch.tensor(r_max, dtype=torch.get_default_dtype())
++    else:
++        r_max = torch.tensor(
++            [r_max] * args.num_interactions, dtype=torch.get_default_dtype()
++        )
++    if isinstance(correlation, (list, tuple, np.ndarray)):
++        correlation = torch.tensor(correlation, dtype=torch.int)
++    else:
++        correlation = torch.tensor(
++            [correlation] * args.num_interactions, dtype=torch.int
++        )
++    assert r_max.shape == correlation.shape, f"Rmax and Correlation must have same shape: {r_max.shape} != {correlation.shape}"
++    assert r_max.shape[0] == args.num_interactions, f"Rmax and Correlation must have length num_interactions: {r_max.shape[0]} != {args.num_interactions}"
++
+     train_loader = torch_geometric.dataloader.DataLoader(
+         dataset=[
+-            data.AtomicData.from_config(config, z_table=z_table, cutoff=args.r_max)
++            data.AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
+             for config in collections.train
+         ],
+         batch_size=args.batch_size,
+@@ -140,7 +160,7 @@ def main() -> None:
+     )
+     valid_loader = torch_geometric.dataloader.DataLoader(
+         dataset=[
+-            data.AtomicData.from_config(config, z_table=z_table, cutoff=args.r_max)
++            data.AtomicData.from_config(config, z_table=z_table, cutoffs=r_max)
+             for config in collections.valid
+         ],
+         batch_size=args.valid_batch_size,
+@@ -149,10 +169,24 @@ def main() -> None:
+     )
+ 
+     loss_fn: torch.nn.Module
++
+     if args.loss == "weighted":
+         loss_fn = modules.WeightedEnergyForcesLoss(
+             energy_weight=args.energy_weight, forces_weight=args.forces_weight
+         )
++    elif args.loss == "weighted_cluster":
++        loss_fn = modules.WeightedEnergyForcesLossForceCluster(
++            energy_weight=args.energy_weight,
++            forces_weight=args.forces_weight,
++            cluster_weight=args.cluster_weight,
++        )
++    elif args.loss == "weighted_cluster_stress":
++        loss_fn = modules.WeightedEnergyForcesStressLossForceCluster(
++            energy_weight=args.energy_weight,
++            forces_weight=args.forces_weight,
++            stress_weight=args.stress_weight,
++            cluster_weight=args.cluster_weight,
++        )
+     elif args.loss == "forces_only":
+         loss_fn = modules.WeightedForcesLoss(forces_weight=args.forces_weight)
+     elif args.loss == "virials":
+@@ -192,7 +226,6 @@ def main() -> None:
+         # Unweighted Energy and Forces loss by default
+         loss_fn = modules.WeightedEnergyForcesLoss(energy_weight=1.0, forces_weight=1.0)
+     logging.info(loss_fn)
+-
+     if args.compute_avg_num_neighbors:
+         args.avg_num_neighbors = modules.compute_avg_num_neighbors(train_loader)
+     logging.info(f"Average number of neighbors: {args.avg_num_neighbors}")
+@@ -230,7 +263,7 @@ def main() -> None:
+ 
+     logging.info(f"Hidden irreps: {args.hidden_irreps}")
+     model_config = dict(
+-        r_max=args.r_max,
++        r_max=r_max,
+         num_bessel=args.num_radial_basis,
+         num_polynomial_cutoff=args.num_cutoff_basis,
+         max_ell=args.max_ell,
+@@ -255,7 +288,7 @@ def main() -> None:
+             )
+         model = modules.ScaleShiftMACE(
+             **model_config,
+-            correlation=args.correlation,
++            correlations=correlation,
+             gate=modules.gate_dict[args.gate],
+             interaction_cls_first=modules.interaction_classes[
+                 "RealAgnosticInteractionBlock"
+@@ -269,7 +302,7 @@ def main() -> None:
+         mean, std = modules.scaling_classes[args.scaling](train_loader, atomic_energies)
+         model = modules.ScaleShiftMACE(
+             **model_config,
+-            correlation=args.correlation,
++            correlations=correlation,
+             gate=modules.gate_dict[args.gate],
+             interaction_cls_first=modules.interaction_classes[args.interaction_first],
+             MLP_irreps=o3.Irreps(args.MLP_irreps),
+@@ -416,6 +449,25 @@ def main() -> None:
+             logging.info(
+                 f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, dipole weight : {args.swa_dipole_weight} and learning rate : {args.swa_lr}"
+             )
++        elif args.loss == "weighted_cluster":
++            loss_fn_energy = modules.WeightedEnergyForcesLossForceCluster(
++                energy_weight=args.swa_energy_weight,
++                forces_weight=args.swa_forces_weight,
++                cluster_weight=args.swa_cluster_weight,
++            )
++            logging.info(
++                f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight} and learning rate : {args.swa_lr}"
++            )
++        elif args.loss == "weighted_cluster_stress":
++            loss_fn_energy = modules.WeightedEnergyForcesStressLossForceCluster(
++                energy_weight=args.energy_weight,
++                forces_weight=args.forces_weight,
++                stress_weight=args.stress_weight,
++                cluster_weight=args.cluster_weight,
++            )
++            logging.info(
++                f"Using stochastic weight averaging (after {args.start_swa} epochs) with energy weight : {args.swa_energy_weight}, forces weight : {args.swa_forces_weight}, cluster weight : {args.swa_cluster_weight}, stress weight : {args.swa_stress_weight} and learning rate : {args.swa_lr}"
++            )
+         else:
+             loss_fn_energy = modules.WeightedEnergyForcesLoss(
+                 energy_weight=args.swa_energy_weight,
+@@ -530,7 +582,7 @@ def main() -> None:
+             table_type=args.error_table,
+             all_collections=all_collections,
+             z_table=z_table,
+-            r_max=args.r_max,
++            r_max=r_max,
+             valid_batch_size=args.valid_batch_size,
+             model=model,
+             loss_fn=loss_fn,

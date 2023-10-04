@@ -5,7 +5,7 @@
 ###########################################################################################
 
 
-from glob import glob
+import glob
 from pathlib import Path
 from typing import Union
 
@@ -76,7 +76,7 @@ class MACECalculator(Calculator):
 
         if isinstance(model_paths, str):
             # Find all models that staisfy the wildcard (e.g. mace_model_*.pt)
-            model_paths_glob = glob(model_paths)
+            model_paths_glob = glob.glob(glob.escape(model_paths))
             if len(model_paths_glob) == 0:
                 raise ValueError(f"Couldn't find MACE model files: {model_paths}")
             model_paths = model_paths_glob
@@ -99,14 +99,15 @@ class MACECalculator(Calculator):
         ]
         for model in self.models:
             model.to(device)  # shouldn't be necessary but seems to help with GPU
-        r_maxs = [model.r_max.cpu() for model in self.models]
+        r_maxs = [model.r_max.cpu().numpy() for model in self.models]
         r_maxs = np.array(r_maxs)
         assert np.all(
             r_maxs == r_maxs[0]
         ), "committee r_max are not all the same {' '.join(r_maxs)}"
-        self.r_max = r_maxs[0]
+
 
         self.device = torch_tools.init_device(device)
+        self.r_max = torch.tensor(r_maxs[0], device=self.device)
         self.energy_units_to_eV = energy_units_to_eV
         self.length_units_to_A = length_units_to_A
         self.z_table = utils.AtomicNumberTable(
@@ -119,7 +120,7 @@ class MACECalculator(Calculator):
                 param.requires_grad = False
 
     def _create_result_tensors(
-        self, model_type: str, num_models: int, num_atoms: int
+        self, model_type: str, num_models: int, num_atoms: int, num_interactions: int,
     ) -> dict:
         """
         Create tensors to store the results of the committee
@@ -132,12 +133,14 @@ class MACECalculator(Calculator):
         if model_type in ["MACE", "EnergyDipoleMACE"]:
             energies = torch.zeros(num_models, device=self.device)
             node_energy = torch.zeros(num_models, num_atoms, device=self.device)
+            node__layer_energy = torch.zeros(num_models, num_atoms, num_interactions,device=self.device)
             forces = torch.zeros(num_models, num_atoms, 3, device=self.device)
             stress = torch.zeros(num_models, 3, 3, device=self.device)
             dict_of_tensors.update(
                 {
                     "energies": energies,
                     "node_energy": node_energy,
+                    "node_layer_energy": node__layer_energy,
                     "forces": forces,
                     "stress": stress,
                 }
@@ -164,7 +167,7 @@ class MACECalculator(Calculator):
         data_loader = torch_geometric.dataloader.DataLoader(
             dataset=[
                 data.AtomicData.from_config(
-                    config, z_table=self.z_table, cutoff=self.r_max
+                    config, z_table=self.z_table, cutoffs=self.r_max
                 )
             ],
             batch_size=1,
@@ -181,7 +184,7 @@ class MACECalculator(Calculator):
 
         batch_base = next(iter(data_loader)).to(self.device)
         ret_tensors = self._create_result_tensors(
-            self.model_type, self.num_models, len(atoms)
+            self.model_type, self.num_models, len(atoms), num_interactions=int(self.models[0].num_interactions.detach().cpu())
         )
         for i, model in enumerate(self.models):
             batch = batch_base.clone()
@@ -189,6 +192,8 @@ class MACECalculator(Calculator):
             if self.model_type in ["MACE", "EnergyDipoleMACE"]:
                 ret_tensors["energies"][i] = out["energy"].detach()
                 ret_tensors["node_energy"][i] = (out["node_energy"] - node_e0).detach()
+            # need to add to add to returned node_layer_energy
+                ret_tensors['node_layer_energy'][i] = (out['node_layer_energy'].detach() - node_e0).T
                 ret_tensors["forces"][i] = out["forces"].detach()
                 if out["stress"] is not None:
                     ret_tensors["stress"][i] = out["stress"].detach()
@@ -204,6 +209,9 @@ class MACECalculator(Calculator):
             self.results["free_energy"] = self.results["energy"]
             self.results["node_energy"] = (
                 torch.mean(ret_tensors["node_energy"] - node_e0, dim=0).cpu().numpy()
+            )
+            self.results['node_layer_energy'] = (
+                torch.mean(ret_tensors['node_layer_energy'], dim=0).cpu().numpy()
             )
             self.results["forces"] = (
                 torch.mean(ret_tensors["forces"], dim=0).cpu().numpy()

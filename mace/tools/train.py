@@ -26,6 +26,7 @@ from .utils import (
     compute_rel_rmse,
     compute_rmse,
 )
+from mace.tools.scatter import scatter_sum
 
 
 @dataclasses.dataclass
@@ -131,6 +132,13 @@ def train(
                 logging.info(
                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A"
                 )
+            elif log_errors == "PerAtomRMSECluster":
+                error_e = eval_metrics["rmse_e_per_atom"] * 1e3
+                error_f = eval_metrics["rmse_f"] * 1e3
+                error_cluster = eval_metrics["rmse_cluster_force"] * 1e3
+                logging.info(
+                    f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_cluster_force={error_cluster:.1f} meV / A"
+                )
             elif (
                 log_errors == "PerAtomRMSEstressvirials"
                 and eval_metrics["rmse_stress_per_atom"] is not None
@@ -140,6 +148,14 @@ def train(
                 error_stress = eval_metrics["rmse_stress_per_atom"] * 1e3
                 logging.info(
                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_stress_per_atom={error_stress:.1f} meV / A^3"
+                )
+            elif log_errors == "PerAtomRMSEstressCluster":
+                error_e = eval_metrics["rmse_e_per_atom"] * 1e3
+                error_f = eval_metrics["rmse_f"] * 1e3
+                error_stress = eval_metrics["rmse_stress_per_atom"] * 1e3
+                error_cluster = eval_metrics["rmse_cluster_force"] * 1e3
+                logging.info(
+                    f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_stress_per_atom={error_stress:.4f} meV / A^3, RMSE_cluster_force={error_cluster:.1f} meV / A"
                 )
             elif (
                 log_errors == "PerAtomRMSEstressvirials"
@@ -182,11 +198,15 @@ def train(
                     f"Epoch {epoch}: loss={valid_loss:.4f}, RMSE_E_per_atom={error_e:.1f} meV, RMSE_F={error_f:.1f} meV / A, RMSE_Mu_per_atom={error_mu:.2f} mDebye"
                 )
             if log_wandb:
+                eval_metrics_valid_prefix = {
+                    f"all-data/valid_{k}": v for k, v in eval_metrics.items()
+                }
                 wandb_log_dict = {
                     "epoch": epoch,
                     "valid_loss": valid_loss,
                     "valid_rmse_e_per_atom": eval_metrics["rmse_e_per_atom"],
                     "valid_rmse_f": eval_metrics["rmse_f"],
+                    **eval_metrics_valid_prefix,
                 }
                 wandb.log(wandb_log_dict)
             if valid_loss >= lowest_loss:
@@ -287,6 +307,9 @@ def evaluate(
     delta_mus_list = []
     delta_mus_per_atom_list = []
     mus_list = []
+    cluster_list = []
+    delta_cluster_force = []
+    cluster_force_list = []
     batch = None  # for pylint
 
     start_time = time.time()
@@ -338,6 +361,22 @@ def evaluate(
                 / (batch.ptr[1:] - batch.ptr[:-1]).unsqueeze(-1)
             )
             mus_list.append(batch.dipole)
+        if batch.cluster is not None:
+            cluster_computed = True
+            cluster_forces_ref = scatter_sum(
+                batch["forces"],
+                torch.unique(batch.cluster, return_inverse=True)[1],
+                dim=0,
+            )
+            cluster_forces_pred = scatter_sum(
+                output["forces"],
+                torch.unique(batch.cluster, return_inverse=True)[1],
+                dim=0,
+            )
+
+            delta_cluster_force.append(cluster_forces_ref - cluster_forces_pred)
+            cluster_force_list.append(cluster_forces_ref)
+            cluster_list.append(batch.cluster)
 
     avg_loss = total_loss / len(data_loader)
 
@@ -386,6 +425,15 @@ def evaluate(
         aux["rmse_mu_per_atom"] = compute_rmse(delta_mus_per_atom)
         aux["rel_rmse_mu"] = compute_rel_rmse(delta_mus, mus)
         aux["q95_mu"] = compute_q95(delta_mus)
+    if cluster_computed:
+        delta_cluster_force = to_numpy(torch.cat(delta_cluster_force, dim=0))
+        cluster_forces_all = to_numpy(torch.cat(cluster_force_list, dim=0))
+        aux["mae_cluster_force"] = compute_mae(delta_cluster_force)
+        aux["rmse_cluster_force"] = compute_rmse(delta_cluster_force)
+        aux["q95_cluster_force"] = compute_q95(delta_cluster_force)
+        aux["rel_rmse_cluster_force"] = compute_rel_rmse(
+            delta_cluster_force, cluster_forces_all
+        )
 
     aux["time"] = time.time() - start_time
 

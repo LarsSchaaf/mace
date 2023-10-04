@@ -65,6 +65,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
             "DipoleRMSE",
             "DipoleMAE",
             "EnergyDipoleRMSE",
+            "PerAtomRMSECluster",
+            "PerAtomRMSEstressCluster",
         ],
         default="PerAtomRMSE",
     )
@@ -84,7 +86,7 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         ],
     )
     parser.add_argument(
-        "--r_max", help="distance cutoff (in Ang)", type=float, default=5.0
+        "--r_max", help="distance cutoff (in Ang). Float or list of values for each layer", type=str, default=5.0
     )
     parser.add_argument(
         "--num_radial_basis",
@@ -122,7 +124,11 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--max_ell", help=r"highest \ell of spherical harmonics", type=int, default=3
     )
     parser.add_argument(
-        "--correlation", help="correlation order at each layer", type=int, default=3
+        "--correlation",
+        help="correlation order at each layer. "
+        "Can be list of values for each layer or single int ",
+        type=str,
+        default=3,
     )
     parser.add_argument(
         "--num_interactions", help="number of interactions", type=int, default=2
@@ -252,6 +258,12 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default="stress",
     )
     parser.add_argument(
+        "--cluster_key",
+        help="Key of atom clusters in training xyz. ""Needed for training on eg. cluster forces. " "Indices are not allowed to repeat accross configurations.",
+        type=str,
+        default="cluster_id",
+    )
+    parser.add_argument(
         "--dipole_key",
         help="Key of reference dipoles in training xyz",
         type=str,
@@ -272,6 +284,8 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "ef",
             "weighted",
+            "weighted_cluster",
+            "weighted_cluster_stress",
             "forces_only",
             "virials",
             "stress",
@@ -302,10 +316,19 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         "--virials_weight", help="weight of virials loss", type=float, default=1.0
     )
     parser.add_argument(
+        "--cluster_weight", help="weight of cluster loss", type=float, default=0.0
+    )
+    parser.add_argument(
         "--swa_virials_weight",
         help="weight of virials loss after starting swa",
         type=float,
         default=10.0,
+    )
+    parser.add_argument(
+        "--swa_cluster_weight",
+        help="weight of cluster loss after starting swa",
+        type=float,
+        default=0.0,
     )
     parser.add_argument(
         "--stress_weight", help="weight of virials loss", type=float, default=1.0
