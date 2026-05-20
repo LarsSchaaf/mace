@@ -6,6 +6,7 @@
 
 import dataclasses
 import logging
+import math
 import time
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
@@ -146,6 +147,98 @@ def valid_err_log(
         )
 
 
+# Fitting to a single Gaussian
+def fit_clean_probs_simple(
+    loss_array, mu_0, sigma_0, alpha=0.3, distributed: bool = False
+):
+    if isinstance(loss_array, torch.Tensor):
+        loss_data = loss_array.detach().reshape(-1)
+
+        if distributed and torch.distributed.is_initialized():
+            batch_mu, batch_var = distributed_mean_var(loss_data)
+        else:
+            batch_mu = loss_data.mean()
+            batch_var = torch.mean((loss_data - batch_mu) ** 2)
+
+        if mu_0 is None and sigma_0 is None:
+            mu = batch_mu
+            sigma_sq = batch_var
+        else:
+            if not isinstance(mu_0, torch.Tensor):
+                mu_0 = torch.tensor(
+                    mu_0,
+                    device=loss_data.device,
+                    dtype=loss_data.dtype,
+                )
+            else:
+                mu_0 = mu_0.to(device=loss_data.device, dtype=loss_data.dtype)
+
+            if not isinstance(sigma_0, torch.Tensor):
+                sigma_0 = torch.tensor(
+                    sigma_0,
+                    device=loss_data.device,
+                    dtype=loss_data.dtype,
+                )
+            else:
+                sigma_0 = sigma_0.to(device=loss_data.device, dtype=loss_data.dtype)
+
+            mu = (1.0 - alpha) * batch_mu + alpha * mu_0
+            sigma_sq = (1.0 - alpha) * batch_var + alpha * sigma_0**2
+
+        sigma = torch.sqrt(torch.clamp(sigma_sq, min=1e-12))
+        return mu, sigma
+
+    else:
+        loss_array = np.asarray(loss_array)
+        loss_data = loss_array.reshape(-1)
+
+        batch_mu = np.mean(loss_data)
+        batch_var = np.mean((loss_data - batch_mu) ** 2)
+
+        if mu_0 is None and sigma_0 is None:
+            mu = batch_mu
+            sigma_sq = batch_var
+        else:
+            mu = (1.0 - alpha) * batch_mu + alpha * mu_0
+            sigma_sq = (1.0 - alpha) * batch_var + alpha * sigma_0**2
+
+        sigma = np.sqrt(max(sigma_sq, 1e-12))
+        return mu, sigma
+
+
+# Calculate the average of scalars collected from all processes in distribute mode.
+# Used for calculating the mean and standard deviation
+def sync_scalar(scalar, device):  # Scalar is a float or 0-dimensional tensor
+    tensor = torch.tensor(scalar, device=device)
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM)
+    tensor /= torch.distributed.get_world_size()
+    return tensor.item()
+
+
+# Helper function for distributed training
+def distributed_mean_var(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    x = x.detach().reshape(-1)
+
+    local_sum = x.sum()
+    local_sumsq = torch.square(x).sum()
+    local_count = torch.tensor(
+        x.numel(),
+        device=x.device,
+        dtype=x.dtype,
+    )
+
+    stats = torch.stack([local_sum, local_sumsq, local_count])
+    torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM)
+
+    global_sum, global_sumsq, global_count = stats
+
+    mean = global_sum / global_count.clamp_min(1.0)
+    var = global_sumsq / global_count.clamp_min(1.0) - torch.square(mean)
+    var = var.clamp_min(1e-12)
+
+    return mean, var
+
+
 def train(
     model: torch.nn.Module,
     loss_fn: torch.nn.Module,
@@ -160,8 +253,13 @@ def train(
     logger: MetricsLogger,
     eval_interval: int,
     output_args: Dict[str, bool],
+    threshold: float,
+    bootstrap: bool,
+    power_law_coeff: float,
+    power_law: float,
     device: torch.device,
     log_errors: str,
+    bootstrap_EMA_alpha: float,
     swa: Optional[SWAContainer] = None,
     ema: Optional[ExponentialMovingAverage] = None,
     max_grad_norm: Optional[float] = 10.0,
@@ -190,6 +288,10 @@ def train(
     logging.info("Loss metrics on validation set")
     epoch = start_epoch
 
+    mu_0 = None
+    sigma_0 = None
+    progress = 0
+
     # log validation loss before _any_ training
     for valid_loader_name, valid_loader in valid_loaders.items():
         valid_loss_head, eval_metrics = evaluate(
@@ -204,32 +306,42 @@ def train(
         )
     valid_loss = valid_loss_head  # consider only the last head for the checkpoint
 
+    update_epoch = False  # If update_epoch is True in an epoch, we update the weights in this epoch
+    if bootstrap:
+        logging.info("===========BOOTSTRAPPING INFORMATION===========")
+        logging.info(f"Bootstrapping is enabled.")
+
     # variable used for broadcast by rank == 0 if epoch loop is exited early, e.g. patience
     exit_now = torch.zeros(1, device=device) if distributed else None
     while epoch < max_num_epochs:
-        # LR scheduler and SWA update
-        if swa is None or epoch < swa.start:
-            if epoch > start_epoch:
-                lr_scheduler.step(
-                    metrics=valid_loss
-                )  # Can break if exponential LR, TODO fix that!
-        else:
-            if swa_start:
-                logging.info("Changing loss based on Stage Two Weights")
-                lowest_loss = np.inf
-                swa_start = False
-                keep_last = True
-            loss_fn = swa.loss_fn
-            swa.model.update_parameters(model)
-            if epoch > start_epoch:
-                swa.scheduler.step()
+        # Logging the training data at the start of the epoch
+        if distributed and rank == 0 or not distributed:
+            # LR scheduler and SWA update
+            if swa is None or epoch < swa.start:
+                if epoch > start_epoch:
+                    lr_scheduler.step(
+                        metrics=valid_loss
+                    )  # Can break if exponential LR, TODO fix that!
+            else:
+                if swa_start:
+                    logging.info("Changing loss based on Stage Two Weights")
+                    lowest_loss = np.inf
+                    swa_start = False
+                    keep_last = True
+                loss_fn = swa.loss_fn
+                swa.model.update_parameters(model)
+                if epoch > start_epoch:
+                    swa.scheduler.step()
 
         # Train
         if distributed:
             train_sampler.set_epoch(epoch)
         if "ScheduleFree" in type(optimizer).__name__:
             optimizer.train()
-        train_one_epoch(
+
+        # The output of the train_one_epoch function is changed to also return the mu_0 and sigma_0,
+        # so that these can be passed on to the next epoch.
+        mu_0, sigma_0, progress = train_one_epoch(
             model=model,
             loss_fn=loss_fn,
             data_loader=train_loader,
@@ -243,6 +355,15 @@ def train(
             distributed=distributed,
             distributed_model=distributed_model,
             rank=rank,
+            mu_0=mu_0,
+            sigma_0=sigma_0,
+            power_law=power_law,
+            power_law_coeff=power_law_coeff,
+            threshold=threshold,
+            progress=progress,
+            bootstrap=bootstrap,
+            update_epoch=update_epoch,
+            bootstrap_EMA_alpha=bootstrap_EMA_alpha,
         )
         if distributed:
             torch.distributed.barrier()
@@ -267,6 +388,7 @@ def train(
                         output_args=output_args,
                         device=device,
                     )
+
                     if rank == 0:
                         valid_err_log(
                             valid_loss_head,
@@ -359,10 +481,21 @@ def train_one_epoch(
     logger: MetricsLogger,
     device: torch.device,
     distributed: bool,
+    threshold: float,
+    bootstrap: bool,
+    progress: int,
+    power_law_coeff: float,
+    power_law: float,
+    update_epoch: bool,
+    bootstrap_EMA_alpha: float,
     distributed_model: Optional[DistributedDataParallel] = None,
     rank: Optional[int] = 0,
-) -> None:
+    mu_0: Optional[float] = None,
+    sigma_0: Optional[float] = None,
+) -> Tuple[float, float]:
     model_to_train = model if distributed_model is None else distributed_model
+
+    num_batches = len(data_loader)
 
     if isinstance(optimizer, LBFGS):
         _, opt_metrics = take_step_lbfgs(
@@ -383,20 +516,41 @@ def train_one_epoch(
             logger.log(opt_metrics)
     else:
         for batch in data_loader:
+
+            value = progress ** (1 / power_law) / power_law_coeff
+            update_epoch = abs(value - round(value)) < 1e-9
+
             _, opt_metrics = take_step(
                 model=model_to_train,
                 loss_fn=loss_fn,
                 batch=batch,
                 optimizer=optimizer,
                 ema=ema,
+                epoch=epoch,
+                rank=rank,
                 output_args=output_args,
                 max_grad_norm=max_grad_norm,
                 device=device,
+                distributed=distributed,
+                mu_0=mu_0,
+                sigma_0=sigma_0,
+                num_batches=num_batches,
+                threshold=threshold,
+                bootstrap=bootstrap,
+                progress=progress,
+                update_epoch=update_epoch,
+                bootstrap_EMA_alpha=bootstrap_EMA_alpha,
             )
             opt_metrics["mode"] = "opt"
             opt_metrics["epoch"] = epoch
+            mu_0 = opt_metrics["mean"]
+            sigma_0 = opt_metrics["std"]
             if rank == 0:
                 logger.log(opt_metrics)
+
+            progress += 1
+
+    return mu_0, sigma_0, progress
 
 
 def take_step(
@@ -405,9 +559,20 @@ def take_step(
     batch: torch_geometric.batch.Batch,
     optimizer: torch.optim.Optimizer,
     ema: Optional[ExponentialMovingAverage],
+    epoch: int,
     output_args: Dict[str, bool],
     max_grad_norm: Optional[float],
     device: torch.device,
+    threshold: float,
+    distributed: bool,
+    bootstrap: bool,
+    update_epoch: bool,
+    num_batches: float,
+    progress: float,
+    bootstrap_EMA_alpha: float,
+    mu_0: Optional[float] = None,
+    sigma_0: Optional[float] = None,
+    rank: Optional[int] = 0,
 ) -> Tuple[float, Dict[str, Any]]:
     start_time = time.time()
     batch = batch.to(device)
@@ -422,22 +587,59 @@ def take_step(
             compute_virials=output_args["virials"],
             compute_stress=output_args["stress"],
         )
-        loss = loss_fn(pred=output, ref=batch)
+
+        per_sample_loss = loss_fn(ref=batch, pred=output, reduction="none")
+        alpha = bootstrap_EMA_alpha
+
+        if update_epoch:
+            mu, sigma = fit_clean_probs_simple(
+                per_sample_loss, mu_0, sigma_0, alpha=alpha, distributed=distributed
+            )
+        else:
+            mu = mu_0
+            sigma = sigma_0
+
+        if mu is None:
+            mu = per_sample_loss.detach().mean()
+        if sigma is None:
+            sigma = per_sample_loss.detach().std(unbiased=False)
+        if not torch.is_tensor(mu):
+            mu = torch.tensor(mu, device=device, dtype=per_sample_loss.dtype)
+        if not torch.is_tensor(sigma):
+            sigma = torch.tensor(sigma, device=device, dtype=per_sample_loss.dtype)
+
+        sigma_safe = torch.clamp(sigma, min=1e-8)
+        z_scores = (per_sample_loss.detach() - mu) / sigma_safe
+
+        if not bootstrap:
+            sample_weights = torch.ones_like(per_sample_loss)
+        else:
+            sample_weights = 0.5 * (
+                1.0 + torch.erf((threshold - z_scores) / math.sqrt(2.0))
+            )
+
+        loss = (sample_weights * sample_weights * per_sample_loss).mean()
+
         loss.backward()
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
-        return loss
+        return loss, mu.detach(), sigma.detach(), sample_weights.detach()
 
-    loss = closure()
+    loss, mu, sigma, sample_weights = closure()
     optimizer.step()
 
     if ema is not None:
         ema.update()
 
+    # Changed so that mean and std is also returned,
+    # So that they can be passed on to the next epoch.
     loss_dict = {
         "loss": to_numpy(loss),
         "time": time.time() - start_time,
+        "mean": float(mu.detach().cpu()),
+        "std": float(sigma.detach().cpu()),
+        "weight_mean": float(sample_weights.mean().detach().cpu()),
     }
 
     return loss, loss_dict
@@ -621,7 +823,8 @@ class MACELoss(Metric):
 
     def update(self, batch, output):  # pylint: disable=arguments-differ
         loss = self.loss_fn(pred=output, ref=batch)
-        self.total_loss += loss
+        loss_mean = loss.mean()
+        self.total_loss += loss_mean
         self.num_data += batch.num_graphs
 
         if output.get("energy") is not None and batch.energy is not None:

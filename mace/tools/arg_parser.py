@@ -1042,6 +1042,39 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         type=str2bool,
         default=False,
     )
+
+    # Bootstrapping parameters
+    parser.add_argument(
+        "--bootstrap",
+        help="Select True to enable bootstrapping",
+        type=str2bool,
+        default=False,
+    )
+    parser.add_argument(
+        "--threshold",
+        help="Threshold for Gaussian outliers",
+        type=float,
+        default=2.0,
+    )
+    parser.add_argument(
+        "--power_law",
+        help="frequency of the bootstrapping weight update",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--power_law_coeff",
+        help="coefficient of the bootstrapping weight update",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--bootstrap_EMA_alpha",
+        help="Bootstrapping weight update exponential moving average alpha",
+        type=float,
+        default=0.9,
+    )
+
     # option for openequivariance acceleration
     parser.add_argument(
         "--enable_oeq",
@@ -1235,6 +1268,37 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         help="batch size to compute average number of neighbours",
         type=int,
         default=16,
+    )
+    # Bootstrapping parameters
+    parser.add_argument(
+        "--bootstrap",
+        help="Select True to enable bootstrapping",
+        type=str2bool,
+        default=False,
+    )
+    parser.add_argument(
+        "--power_law",
+        help="Exponent to indicate bootstrapping weight update",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--power_law_coeff",
+        help="coefficient of the bootstrapping weight update",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--threshold",
+        help="Threshold for Gaussian outliers",
+        type=float,  # or int, str, etc.
+        default=2.0,  # or whatever default you want
+    )
+    parser.add_argument(
+        "--bootstrap_EMA_alpha",
+        help="Bootstrapping weight update exponential moving average alpha",
+        type=float,
+        default=0.9,
     )
 
     parser.add_argument(

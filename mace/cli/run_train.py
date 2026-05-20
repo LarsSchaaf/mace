@@ -749,6 +749,7 @@ def run(args) -> None:
         )
 
     loss_fn = get_loss_fn(args, dipole_only, args.compute_dipole)
+
     args.avg_num_neighbors = get_avg_num_neighbors(head_configs, args, train_loader, device)
 
     # Model
@@ -965,6 +966,11 @@ def run(args) -> None:
         plotter=plotter,
         train_sampler=train_sampler,
         rank=rank,
+        threshold=args.threshold,
+        bootstrap=args.bootstrap,
+        power_law=args.power_law,
+        power_law_coeff=args.power_law_coeff,
+        bootstrap_EMA_alpha=args.bootstrap_EMA_alpha
     )
 
     logging.info("")
