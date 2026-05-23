@@ -54,6 +54,9 @@ class AtomicData(torch_geometric.data.Data):
     volume: torch.Tensor
     fermi_level: torch.Tensor
     external_field: torch.Tensor
+    actual_energy: torch.Tensor
+    actual_forces: torch.Tensor
+    config_id: torch.Tensor
 
     def __init__(
         self,
@@ -74,12 +77,15 @@ class AtomicData(torch_geometric.data.Data):
         polarizability_weight: Optional[torch.Tensor],  # [,]
         forces: Optional[torch.Tensor],  # [n_nodes, 3]
         energy: Optional[torch.Tensor],  # [, ]
+        actual_energy: Optional[torch.Tensor],  # [, ]
+        actual_forces: Optional[torch.Tensor],  # [n_nodes, 3]
         stress: Optional[torch.Tensor],  # [1,3,3]
         virials: Optional[torch.Tensor],  # [1,3,3]
         dipole: Optional[torch.Tensor],  # [, 3]
         charges: Optional[torch.Tensor],  # [n_nodes, ]
         polarizability: Optional[torch.Tensor],  # [1, 3, 3]
         elec_temp: Optional[torch.Tensor],  # [,]
+        config_id: Optional[torch.Tensor],  # [, ]
         total_charge: Optional[torch.Tensor] = None,  # [,]
         total_spin: Optional[torch.Tensor] = None,  # [,]
         pbc: Optional[torch.Tensor] = None,  # [, 3]
@@ -107,8 +113,11 @@ class AtomicData(torch_geometric.data.Data):
         assert dipole_weight is None or dipole_weight.shape == (1, 3), dipole_weight
         assert charges_weight is None or len(charges_weight.shape) == 0
         assert cell is None or cell.shape == (3, 3)
+        assert config_id is None or len(config_id.shape) == 0
         assert forces is None or forces.shape == (num_nodes, 3)
         assert energy is None or len(energy.shape) == 0
+        assert actual_energy is None or len(energy.shape) == 0
+        assert actual_forces is None or forces.shape == (num_nodes, 3)
         assert stress is None or stress.shape == (1, 3, 3)
         assert virials is None or virials.shape == (1, 3, 3)
         assert dipole is None or dipole.shape[-1] == 3
@@ -147,6 +156,9 @@ class AtomicData(torch_geometric.data.Data):
             "forces": forces,
             "energy": energy,
             "stress": stress,
+            "actual_energy": actual_energy,
+            "actual_forces": actual_forces,
+            "config_id": config_id,
             "virials": virials,
             "dipole": dipole,
             "charges": charges,
@@ -285,11 +297,25 @@ class AtomicData(torch_geometric.data.Data):
             if config.properties.get("forces") is not None
             else torch.zeros(num_atoms, 3, dtype=torch.get_default_dtype())
         )
+        actual_forces = (
+            torch.tensor(
+                config.properties.get("actual_forces"), dtype=torch.get_default_dtype()
+            )
+            if config.properties.get("actual_forces") is not None
+            else torch.zeros(num_atoms, 3, dtype=torch.get_default_dtype())
+        )
         energy = (
             torch.tensor(
                 config.properties.get("energy"), dtype=torch.get_default_dtype()
             )
             if config.properties.get("energy") is not None
+            else torch.tensor(0.0, dtype=torch.get_default_dtype())
+        )
+        actual_energy = (
+            torch.tensor(
+                config.properties.get("actual_energy"), dtype=torch.get_default_dtype()
+            )
+            if config.properties.get("actual_energy") is not None
             else torch.tensor(0.0, dtype=torch.get_default_dtype())
         )
         stress = (
@@ -330,6 +356,15 @@ class AtomicData(torch_geometric.data.Data):
                 dtype=torch.get_default_dtype(),
             )
             if config.properties.get("elec_temp") is not None
+            else torch.tensor(0.0, dtype=torch.get_default_dtype())
+        )
+
+        config_id = (
+            torch.tensor(
+                config.properties.get("config_id"),
+                dtype=torch.get_default_dtype(),
+            )
+            if config.properties.get("config_id") is not None
             else torch.tensor(0.0, dtype=torch.get_default_dtype())
         )
 
@@ -415,6 +450,9 @@ class AtomicData(torch_geometric.data.Data):
             forces=forces,
             energy=energy,
             stress=stress,
+            actual_energy=actual_energy,
+            actual_forces=actual_forces,
+            config_id=config_id,
             virials=virials,
             dipole=dipole,
             charges=charges,

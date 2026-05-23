@@ -7,6 +7,8 @@
 import dataclasses
 import logging
 import math
+import os
+import csv
 import time
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
@@ -22,6 +24,9 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch_ema import ExponentialMovingAverage
 from torchmetrics import Metric
+
+from mace.tools import TensorDict
+from mace.tools.torch_geometric import Batch
 
 from mace.cli.visualise_train import TrainingPlotter
 
@@ -316,6 +321,166 @@ def train(
     while epoch < max_num_epochs:
         # Logging the training data at the start of the epoch
         if distributed and rank == 0 or not distributed:
+            for batch in train_loader:
+                batch = batch.to(device)
+                batch_dict = batch.to_dict()
+                outputer = model(
+                    batch_dict,
+                    training=False,
+                    compute_force=output_args["forces"],
+                    compute_virials=output_args["virials"],
+                    compute_stress=output_args["stress"],
+                )
+
+                # Energy error calculation
+                # This is calculated with respect to the actual energy loss that we know but not the machine learning loop ...
+                def per_sample_mse_energy(ref: Batch, pred: TensorDict) -> torch.Tensor:
+                    # Returns a tensor of shape [n_graphs], one loss per sample
+                    num_atoms = ref.ptr[1:] - ref.ptr[:-1]
+                    per_sample_loss = (
+                        torch.square(pred["energy"] - ref["actual_energy"]) / num_atoms
+                    )
+                    return per_sample_loss
+
+                # Alternative energy loss, that the machine learning loop sees...
+                def per_sample_mse_energy_alt(
+                    ref: Batch, pred: TensorDict
+                ) -> torch.Tensor:
+                    # Returns a tensor of shape [n_graphs], one loss per sample
+                    num_atoms = ref.ptr[1:] - ref.ptr[:-1]
+                    per_sample_loss = (
+                        torch.square(pred["energy"] - ref["energy"]) / num_atoms
+                    )
+                    return per_sample_loss
+
+                # Force error calculation
+                def per_sample_mse_forces(ref: Batch, pred: TensorDict) -> torch.Tensor:
+                    # Calculate squared error for each atom
+                    atomwise_loss = torch.square(
+                        ref["actual_forces"] - pred["forces"]
+                    ).sum(
+                        dim=-1
+                    )  # [n_atoms]
+                    # Now, sum over atoms belonging to each structure
+                    per_sample_loss = []
+                    for i in range(len(ref.ptr) - 1):
+                        start, end = ref.ptr[i], ref.ptr[i + 1]
+                        per_sample_loss.append(atomwise_loss[start:end].mean())
+                    return torch.stack(per_sample_loss)  # [n_graph
+
+                def per_sample_mse_forces_alt(
+                    ref: Batch, pred: TensorDict
+                ) -> torch.Tensor:
+                    # Calculate squared error for each atom
+                    atomwise_loss = torch.square(ref["forces"] - pred["forces"]).sum(
+                        dim=-1
+                    )  # [n_atoms]
+                    # Now, sum over atoms belonging to each structure
+                    per_sample_loss = []
+                    for i in range(len(ref.ptr) - 1):
+                        start, end = ref.ptr[i], ref.ptr[i + 1]
+                        per_sample_loss.append(atomwise_loss[start:end].mean())
+                    return torch.stack(per_sample_loss)  # [n_graph
+
+                per_sample_force_losses = torch.sqrt(
+                    per_sample_mse_forces(ref=batch, pred=outputer)
+                )
+                per_sample_energy_losses = torch.sqrt(
+                    per_sample_mse_energy(ref=batch, pred=outputer)
+                )
+                per_sample_energy_losses_alt = torch.sqrt(
+                    per_sample_mse_energy_alt(ref=batch, pred=outputer)
+                )
+                per_sample_force_losses_alt = torch.sqrt(
+                    per_sample_mse_forces_alt(ref=batch, pred=outputer)
+                )
+                log_path = "training_log.csv"
+                write_header = not os.path.exists(log_path)
+                rows = []
+                if write_header:
+                    rows.append(
+                        [
+                            "epoch",
+                            "config_id",
+                            "Actual energy error per atom",
+                            "energy error per atom",
+                            "Actual force error",
+                            "force error",
+                        ]
+                    )
+
+                for i in range(len(batch.config_id)):
+                    rows.append(
+                        [
+                            epoch,
+                            int((batch.config_id[i]).item()),
+                            per_sample_energy_losses[i].item(),
+                            per_sample_energy_losses_alt[i].item(),
+                            per_sample_force_losses[i].item(),
+                            per_sample_force_losses_alt[i].item(),
+                        ]
+                    )
+
+                with open(log_path, mode="a", newline="") as log_file:
+                    writer = csv.writer(log_file)
+                    writer.writerows(rows)
+
+            # Calculate the validation errors and put them in a file
+            for batch in valid_loader:
+                batch = batch.to(device)
+                batch_dict = batch.to_dict()
+                outputer = model(
+                    batch_dict,
+                    training=False,
+                    compute_force=output_args["forces"],
+                    compute_virials=output_args["virials"],
+                    compute_stress=output_args["stress"],
+                )
+
+                per_sample_force_losses = torch.sqrt(
+                    per_sample_mse_forces(ref=batch, pred=outputer)
+                )
+                per_sample_energy_losses = torch.sqrt(
+                    per_sample_mse_energy(ref=batch, pred=outputer)
+                )
+                per_sample_energy_losses_alt = torch.sqrt(
+                    per_sample_mse_energy_alt(ref=batch, pred=outputer)
+                )
+                per_sample_force_losses_alt = torch.sqrt(
+                    per_sample_mse_forces_alt(ref=batch, pred=outputer)
+                )
+
+                log_path = "valid_log.csv"
+                write_header = not os.path.exists(log_path)
+                rows = []
+                if write_header:
+                    rows.append(
+                        [
+                            "epoch",
+                            "config_id",
+                            "Actual energy error per atom",
+                            "energy error per atom",
+                            "Actual force error",
+                            "force error",
+                        ]
+                    )
+
+                for i in range(len(batch.config_id)):
+                    rows.append(
+                        [
+                            epoch,
+                            int((batch.config_id[i]).item()),
+                            per_sample_energy_losses[i].item(),
+                            per_sample_energy_losses_alt[i].item(),
+                            per_sample_force_losses[i].item(),
+                            per_sample_force_losses_alt[i].item(),
+                        ]
+                    )
+
+                with open(log_path, mode="a", newline="") as log_file:
+                    writer = csv.writer(log_file)
+                    writer.writerows(rows)
+
             # LR scheduler and SWA update
             if swa is None or epoch < swa.start:
                 if epoch > start_epoch:
@@ -628,6 +793,30 @@ def take_step(
 
     loss, mu, sigma, sample_weights = closure()
     optimizer.step()
+
+    # Just for logging purposes, save mean and std and the averge weights
+    log_path = "mean_std_log.csv"
+    with open(log_path, mode="a", newline="") as log_file:
+        writer = csv.writer(log_file)
+        write_file = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
+        if write_file:
+            writer.writerow(
+                [
+                    "epoch",
+                    "mean",
+                    "std",
+                    "mean weight",
+                ]
+            )
+        mean_weight = sample_weights.mean().item()
+        writer.writerow(
+            [
+                progress / num_batches,
+                mu.detach().cpu().item(),
+                sigma.detach().cpu().item(),
+                mean_weight,
+            ]
+        )
 
     if ema is not None:
         ema.update()
