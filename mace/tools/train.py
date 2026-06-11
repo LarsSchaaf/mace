@@ -789,9 +789,16 @@ def take_step(
         if max_grad_norm is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
-        return loss, mu.detach(), sigma.detach(), sample_weights.detach()
+        return (
+            loss,
+            mu.detach(),
+            sigma.detach(),
+            sample_weights.detach(),
+            per_sample_loss.detach(),
+            z_scores.detach(),
+        )
 
-    loss, mu, sigma, sample_weights = closure()
+    loss, mu, sigma, sample_weights, per_sample_loss, z_scores = closure()
     optimizer.step()
 
     # Just for logging purposes, save mean and std and the averge weights
@@ -817,6 +824,60 @@ def take_step(
                 mean_weight,
             ]
         )
+
+    # Per-config weight log: one row per configuration in the batch, every batch.
+    # This is what lets you map the bootstrap weight back to a specific structure
+    # via its config_id (read from / auto-assigned to the xyz). Only rank 0 writes
+    # to avoid clobbering the file under distributed training.
+    if rank == 0:
+        config_ids = (
+            batch.config_id.detach().cpu()
+            if getattr(batch, "config_id", None) is not None
+            else torch.arange(sample_weights.shape[0])
+        )
+        weights_cpu = sample_weights.detach().cpu()
+        losses_cpu = per_sample_loss.detach().cpu()
+        z_cpu = z_scores.detach().cpu()
+        batch_in_epoch = int(progress % num_batches) if num_batches else 0
+        weight_log_path = "config_weights_log.csv"
+        write_header = (
+            not os.path.exists(weight_log_path)
+            or os.path.getsize(weight_log_path) == 0
+        )
+        with open(weight_log_path, mode="a", newline="") as wf:
+            writer = csv.writer(wf)
+            if write_header:
+                writer.writerow(
+                    [
+                        "epoch",
+                        "batch_in_epoch",
+                        "progress",
+                        "config_id",
+                        "weight",
+                        "per_config_loss",
+                        "z_score",
+                        "mean",
+                        "std",
+                    ]
+                )
+            mu_v = mu.detach().cpu().item()
+            sigma_v = sigma.detach().cpu().item()
+            writer.writerows(
+                [
+                    [
+                        epoch,
+                        batch_in_epoch,
+                        progress,
+                        int(config_ids[i].item()),
+                        weights_cpu[i].item(),
+                        losses_cpu[i].item(),
+                        z_cpu[i].item(),
+                        mu_v,
+                        sigma_v,
+                    ]
+                    for i in range(weights_cpu.shape[0])
+                ]
+            )
 
     if ema is not None:
         ema.update()

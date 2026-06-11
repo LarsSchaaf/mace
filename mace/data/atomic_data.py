@@ -116,8 +116,8 @@ class AtomicData(torch_geometric.data.Data):
         assert config_id is None or len(config_id.shape) == 0
         assert forces is None or forces.shape == (num_nodes, 3)
         assert energy is None or len(energy.shape) == 0
-        assert actual_energy is None or len(energy.shape) == 0
-        assert actual_forces is None or forces.shape == (num_nodes, 3)
+        assert actual_energy is None or len(actual_energy.shape) == 0
+        assert actual_forces is None or actual_forces.shape == (num_nodes, 3)
         assert stress is None or stress.shape == (1, 3, 3)
         assert virials is None or virials.shape == (1, 3, 3)
         assert dipole is None or dipole.shape[-1] == 3

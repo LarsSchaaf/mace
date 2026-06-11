@@ -724,6 +724,34 @@ def build_default_arg_parser() -> argparse.ArgumentParser:
         default=DefaultKeys.TOTAL_CHARGE.value,
     )
     parser.add_argument(
+        "--config_id_key",
+        help=(
+            "Key of the per-configuration id in the training xyz info. Used to "
+            "track configs in the per-config weight/error logs. If absent in the "
+            "xyz, the frame index within the file is assigned automatically."
+        ),
+        type=str,
+        default=DefaultKeys.CONFIG_ID.value,
+    )
+    parser.add_argument(
+        "--actual_energy_key",
+        help=(
+            "Key of the 'clean' reference energy in the training xyz info "
+            "(optional; only used for noise-injection debugging logs)."
+        ),
+        type=str,
+        default=DefaultKeys.ACTUAL_ENERGY.value,
+    )
+    parser.add_argument(
+        "--actual_forces_key",
+        help=(
+            "Key of the 'clean' reference forces in the training xyz arrays "
+            "(optional; only used for noise-injection debugging logs)."
+        ),
+        type=str,
+        default=DefaultKeys.ACTUAL_FORCES.value,
+    )
+    parser.add_argument(
         "--embedding_specs",
         help=(
             "Dict of feature‐spec dictionaries. "
@@ -1332,6 +1360,25 @@ def build_preprocess_arg_parser() -> argparse.ArgumentParser:
         help="Key of head in training xyz",
         type=str,
         default=DefaultKeys.HEAD.value,
+    )
+    parser.add_argument(
+        "--config_id_key",
+        help="Key of the per-configuration id in the xyz info (see "
+        "readme-noise-resilient.md). Auto-assigned by frame index if absent.",
+        type=str,
+        default=DefaultKeys.CONFIG_ID.value,
+    )
+    parser.add_argument(
+        "--actual_energy_key",
+        help="Key of the 'clean' reference energy (optional, noise-injection logs).",
+        type=str,
+        default=DefaultKeys.ACTUAL_ENERGY.value,
+    )
+    parser.add_argument(
+        "--actual_forces_key",
+        help="Key of the 'clean' reference forces (optional, noise-injection logs).",
+        type=str,
+        default=DefaultKeys.ACTUAL_FORCES.value,
     )
     parser.add_argument(
         "--heads",

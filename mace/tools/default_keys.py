@@ -15,6 +15,12 @@ class DefaultKeys(Enum):
     TOTAL_CHARGE = "total_charge"
     TOTAL_SPIN = "total_spin"
     ELEC_TEMP = "elec_temp"
+    # Per-configuration identifier used to track configs through training/logging.
+    CONFIG_ID = "config_id"
+    # Optional "clean" reference values, useful for noise-injection debugging
+    # (the values the model *should* learn, distinct from the noisy training labels).
+    ACTUAL_ENERGY = "actual_energy"
+    ACTUAL_FORCES = "actual_forces"
 
     @staticmethod
     def keydict() -> dict[str, str]:

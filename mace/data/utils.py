@@ -60,8 +60,10 @@ def update_keyspec_from_kwargs(
         "total_charge_key",
         "polarizability_key",
         "total_spin_key",
+        "config_id_key",
+        "actual_energy_key",
     ]
-    arrays = ["forces_key", "charges_key"]
+    arrays = ["forces_key", "charges_key", "actual_forces_key"]
     info_keys = {}
     arrays_keys = {}
     for key in infos:
@@ -345,6 +347,24 @@ def load_from_xyz(
 
     for atoms in atoms_list:
         atoms.info[head_key] = head_name
+
+    # Ensure every configuration carries a config_id so it can be tracked through
+    # training and the per-config weight/error logs. If the xyz already provides
+    # one (under the configured key) we keep it; otherwise we fall back to the
+    # frame index within this file. NOTE: auto-assigned ids are unique *within a
+    # file* (i.e. they match the frame order in the xyz). For ids that are unique
+    # across multiple files/heads, set them explicitly in the xyz instead.
+    config_id_key = key_specification.info_keys.get("config_id", "config_id")
+    n_auto_assigned = 0
+    for idx, atoms in enumerate(atoms_list):
+        if atoms.info.get(config_id_key) is None:
+            atoms.info[config_id_key] = idx
+            n_auto_assigned += 1
+    if n_auto_assigned > 0:
+        logging.info(
+            f"Auto-assigned config_id (key '{config_id_key}') to {n_auto_assigned} "
+            f"of {len(atoms_list)} configs in '{file_path}' using their frame index."
+        )
 
     configs = config_from_atoms_list(
         atoms_list,

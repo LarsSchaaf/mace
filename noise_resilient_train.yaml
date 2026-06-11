@@ -1,0 +1,74 @@
+# =============================================================================
+# MACE training config: noise-resilient ("bootstrap") outlier down-weighting
+# with per-config weight logging.
+#
+#   mace_run_train --config noise_resilient_train.yaml
+#
+# YAML keys are the long CLI flags without the leading "--".
+# See readme-noise-resilient.md for the full explanation.
+# =============================================================================
+
+# ---- run / data --------------------------------------------------------------
+name: noise_resilient_run
+model: MACE
+train_file: train.xyz          # <-- your training set
+valid_fraction: 0.1            # or set valid_file: valid.xyz
+test_file: test.xyz            # optional
+
+# keys read out of the xyz info/arrays (change to match your file)
+energy_key: REF_energy
+forces_key: REF_forces
+# stress_key: REF_stress
+
+# Per-config tracking id. Read from atoms.info["config_id"]; if absent the frame
+# index in the file is auto-assigned. Stamp explicit ids with
+# scripts/assign_config_ids.py for ids that are unique across files.
+config_id_key: config_id
+
+# Optional "clean" labels for noise-injection studies (only needed if you inject
+# noise into energy/forces and keep the originals). Leave as-is if unused.
+actual_energy_key: actual_energy
+actual_forces_key: actual_forces
+
+# ---- model -------------------------------------------------------------------
+num_interactions: 2
+num_channels: 128
+max_L: 1
+r_max: 5.0
+loss: weighted                 # energy+forces (per-config path). Also OK: stress,
+                               # virials, energy_forces_dipole, l1l2.
+                               # AVOID: universal / huber / polarizability losses
+                               # (not wired for reduction='none' on this branch).
+energy_weight: 1.0
+forces_weight: 100.0
+
+# ---- optimisation ------------------------------------------------------------
+device: cuda
+batch_size: 10
+valid_batch_size: 10
+max_num_epochs: 200
+lr: 0.01
+ema: true
+ema_decay: 0.99
+default_dtype: float64
+seed: 123
+
+# ---- noise-resilient / bootstrap outlier down-weighting ----------------------
+# Master switch. false => identical to vanilla MACE (all weights = 1).
+bootstrap: true
+
+# z-score above which a config is treated as an outlier and down-weighted.
+# weight = 0.5*(1 + erf((threshold - z)/sqrt(2)))  == CDF of N(mu, sigma).
+# Lower threshold => more aggressive down-weighting.
+threshold: 2.0
+
+# EMA on the running (mu, sigma) of the per-config loss distribution.
+# 0.9 => slow/stable estimate (90% history, 10% current batch).
+bootstrap_EMA_alpha: 0.9
+
+# How often (mu, sigma) is refit. Refit happens when
+#   progress**(1/power_law) / power_law_coeff   is (near) an integer.
+# 1.0 / 1.0 => refit every batch. Raise power_law_coeff to refit less often;
+# power_law > 1 makes refits progressively sparser over training.
+power_law: 1.0
+power_law_coeff: 1.0
