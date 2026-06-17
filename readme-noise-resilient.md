@@ -3,7 +3,8 @@
 A training mode for MACE that automatically **down-weights configurations whose
 loss is an outlier**, so the model does not waste capacity fitting noisy /
 corrupted labels. It also logs the **per-config weight** every batch, keyed by a
-`config_id`, so you can see exactly which structures were de-emphasised.
+`config_id`, so you can see exactly which structures were de-emphasised. Please 
+see the [paper (arxiv: 2602.08849)](https://arxiv.org/abs/2602.08849) for details.
 
 ## Short explanation
 
@@ -140,3 +141,18 @@ print(df.groupby("config_id")["weight"].mean().sort_values().head(20))
 * `config_weights_log.csv` has one row per config per batch — for very large
   datasets over many epochs it grows quickly. Delete/rotate it between runs (it
   is appended to).
+
+## Citation
+
+> Lam, Terry CW, Niamh O'Neill, Christoph Schran, and Lars L. Schaaf. "Cutting
+> Through the Noise: On-the-fly Outlier Detection for Robust Training of Machine
+> Learning Interatomic Potentials." arXiv preprint arXiv:2602.08849 (2026).
+
+```bibtex
+@article{lam2026cutting,
+  title={Cutting Through the Noise: On-the-fly Outlier Detection for Robust Training of Machine Learning Interatomic Potentials},
+  author={Lam, Terry CW and O'Neill, Niamh and Schran, Christoph and Schaaf, Lars L},
+  journal={arXiv preprint arXiv:2602.08849},
+  year={2026}
+}
+```
